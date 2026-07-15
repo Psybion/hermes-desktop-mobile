@@ -1,0 +1,23 @@
+# Managed by hermes-mobile-desktop
+[Unit]
+Description=Hermes Desktop Web gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@HERMES_HOME_SYSTEMD@
+EnvironmentFile=@ENV_FILE_SYSTEMD@
+Environment="PATH=@PATH@"
+Environment="PYTHONPATH=@SOURCE_ROOT@"
+ExecStart="@HERMES_BIN@" dashboard --host 127.0.0.1 --port @GATEWAY_PORT@ --no-open --skip-build
+Restart=always
+RestartSec=3
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

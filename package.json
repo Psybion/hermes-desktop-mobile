@@ -1,0 +1,20 @@
+{
+  "name": "hermes-mobile-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Run the genuine Hermes Desktop renderer privately in a phone-friendly browser.",
+  "license": "MIT",
+  "scripts": {
+    "check": "./scripts/check.sh",
+    "test:source": "./scripts/ci.sh",
+    "qa": "node qa/verify.cjs",
+    "qa:pane": "node qa/mobile-pane-regression.cjs",
+    "qa:chat": "node qa/smoke-chat.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.60.0"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  }
+}

@@ -1,0 +1,1249 @@
+diff --git a/apps/desktop/index.html b/apps/desktop/index.html
+index 831478f..626bc53 100644
+--- a/apps/desktop/index.html
++++ b/apps/desktop/index.html
+@@ -2,9 +2,15 @@
+ <html lang="en">
+   <head>
+     <meta charset="UTF-8" />
+-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
++    <meta
++      name="viewport"
++      content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
++    />
+     <meta name="color-scheme" content="light dark" />
+     <meta name="theme-color" content="#0a0a0a" />
++    <meta name="apple-mobile-web-app-capable" content="yes" />
++    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
++    <meta name="mobile-web-app-capable" content="yes" />
+     <link rel="icon" type="image/png" sizes="180x180" href="/apple-touch-icon.png" />
+     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+     <link rel="shortcut icon" href="/apple-touch-icon.png" />
+diff --git a/apps/desktop/src/app/chat/composer/controls.tsx b/apps/desktop/src/app/chat/composer/controls.tsx
+index 8bc7abc..20853b6 100644
+--- a/apps/desktop/src/app/chat/composer/controls.tsx
++++ b/apps/desktop/src/app/chat/composer/controls.tsx
+@@ -85,11 +85,18 @@ export function ComposerControls({
+     return <ConversationPill {...conversation} disabled={disabled} />
+   }
+ 
+-  const showVoicePrimary = !busy && !hasComposerPayload
++  // A phone keyboard owns the Return key. In the browser-served desktop the
++  // primary action remains an explicit Send button instead of turning into a
++  // voice-mode launcher whenever the draft is empty.
++  const browserRuntime = typeof document !== 'undefined' && document.documentElement.dataset.hermesBrowser === 'true'
++
++  const showVoicePrimary = !browserRuntime && !busy && !hasComposerPayload
+ 
+   return (
+     <div className="ml-auto flex shrink-0 items-center gap-(--composer-control-gap)">
+-      <ModelPill compact={compactModelPill} disabled={disabled} model={state.model} />
++      <div data-slot="composer-model-pill">
++        <ModelPill compact={compactModelPill} disabled={disabled} model={state.model} />
++      </div>
+       {/* While the agent runs and the user is typing, steer takes over the mic's
+           slot rather than crowding the row with an extra button. */}
+       {canSteer ? (
+@@ -107,9 +114,13 @@ export function ComposerControls({
+           </Button>
+         </Tip>
+       ) : (
+-        <DictationButton disabled={disabled} onToggle={onDictate} state={state.voice} status={voiceStatus} />
++        <div data-slot="composer-dictation">
++          <DictationButton disabled={disabled} onToggle={onDictate} state={state.voice} status={voiceStatus} />
++        </div>
+       )}
+-      <AutoSpeakButton active={autoSpeak} disabled={disabled} onToggle={onToggleAutoSpeak} />
++      <div data-slot="composer-auto-speak">
++        <AutoSpeakButton active={autoSpeak} disabled={disabled} onToggle={onToggleAutoSpeak} />
++      </div>
+       {showVoicePrimary ? (
+         <Tip label={c.startVoice}>
+           <Button
+diff --git a/apps/desktop/src/app/chat/composer/index.tsx b/apps/desktop/src/app/chat/composer/index.tsx
+index 1f5df46..2d4d60e 100644
+--- a/apps/desktop/src/app/chat/composer/index.tsx
++++ b/apps/desktop/src/app/chat/composer/index.tsx
+@@ -556,6 +556,19 @@ export function ChatBar({
+     }
+ 
+     if (event.key === 'Enter' && !event.shiftKey) {
++      // Touch-first web mode uses Enter for a newline and the visible arrow for
++      // Send. This avoids accidental submissions from mobile IMEs whose Return
++      // key cannot reliably express Shift+Enter.
++      const touchWeb =
++        document.documentElement.dataset.hermesBrowser === 'true' && window.matchMedia('(pointer: coarse)').matches
++
++      if (touchWeb) {
++        event.preventDefault()
++        document.execCommand('insertLineBreak')
++
++        return
++      }
++
+       event.preventDefault()
+ 
+       // Decide from the DOM, not React state. `hasComposerPayload` is derived
+diff --git a/apps/desktop/src/app/overlays/overlay-view.tsx b/apps/desktop/src/app/overlays/overlay-view.tsx
+index 61efdab..38f5bfd 100644
+--- a/apps/desktop/src/app/overlays/overlay-view.tsx
++++ b/apps/desktop/src/app/overlays/overlay-view.tsx
+@@ -58,6 +58,7 @@ export function OverlayView({
+         'p-[calc(var(--titlebar-height)+0.625rem)]',
+         'sm:p-[calc(var(--titlebar-height)+0.875rem)]'
+       )}
++      data-slot="overlay-backdrop"
+       onClick={event => {
+         if (event.target === event.currentTarget) {
+           closeOverlay()
+@@ -70,6 +71,7 @@ export function OverlayView({
+           'relative flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-(--ui-stroke-secondary) bg-(--ui-chat-surface-background) shadow-md',
+           rootClassName
+         )}
++        data-slot="overlay-card"
+       >
+         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-[calc(var(--titlebar-height)+0.1875rem)] [-webkit-app-region:drag]">
+           {headerContent && (
+diff --git a/apps/desktop/src/app/shell/app-shell.tsx b/apps/desktop/src/app/shell/app-shell.tsx
+index efe9035..a239b77 100644
+--- a/apps/desktop/src/app/shell/app-shell.tsx
++++ b/apps/desktop/src/app/shell/app-shell.tsx
+@@ -134,7 +134,9 @@ export function AppShell({
+   // between the pane-tool cluster and the system cluster so they don't sit
+   // flush against each other. Modeled as N gaps (N - 1 inner + 1 trailing)
+   // to keep the formula generic for any pane-tool count.
+-  const SYSTEM_TOOL_COUNT = 4
++  // Mobile web keeps only Settings + the opposite rail toggle. Reserving the
++  // desktop four-button footprint would squeeze the session title to nothing.
++  const SYSTEM_TOOL_COUNT = narrowViewport ? 2 : 4
+   const paneToolCount = titlebarTools?.filter(tool => !tool.hidden).length ?? 0
+   const systemToolsWidth = `calc(${SYSTEM_TOOL_COUNT} * (var(--titlebar-control-size) + 0.25rem))`
+ 
+diff --git a/apps/desktop/src/app/shell/titlebar-controls.tsx b/apps/desktop/src/app/shell/titlebar-controls.tsx
+index fb0cae4..1724f2f 100644
+--- a/apps/desktop/src/app/shell/titlebar-controls.tsx
++++ b/apps/desktop/src/app/shell/titlebar-controls.tsx
+@@ -2,9 +2,11 @@ import { useStore } from '@nanostores/react'
+ import type { ComponentProps, ReactNode } from 'react'
+ import { useLocation, useNavigate } from 'react-router-dom'
+ 
++import { PANE_TOGGLE_REVEAL_EVENT } from '@/components/pane-shell'
+ import { Button } from '@/components/ui/button'
+ import { Codicon } from '@/components/ui/codicon'
+ import { Tip } from '@/components/ui/tooltip'
++import { useMediaQuery } from '@/hooks/use-media-query'
+ import { useI18n } from '@/i18n'
+ import { triggerHaptic } from '@/lib/haptics'
+ import { cn } from '@/lib/utils'
+@@ -14,11 +16,14 @@ import {
+   $fileBrowserOpen,
+   $panesFlipped,
+   $sidebarOpen,
++  CHAT_SIDEBAR_PANE_ID,
++  FILE_BROWSER_PANE_ID,
+   toggleFileBrowserOpen,
+   togglePanesFlipped,
+   toggleSidebarOpen
+ } from '@/store/layout'
+ 
++import { SIDEBAR_COLLAPSE_MEDIA_QUERY } from '../layout-constants'
+ import { appViewForPath, isOverlayView } from '../routes'
+ 
+ import { titlebarButtonClass } from './titlebar'
+@@ -54,6 +59,17 @@ export function TitlebarControls({ leftTools = [], tools = [], onOpenSettings }:
+   const fileBrowserOpen = useStore($fileBrowserOpen)
+   const sidebarOpen = useStore($sidebarOpen)
+   const panesFlipped = useStore($panesFlipped)
++  const narrowViewport = useMediaQuery(SIDEBAR_COLLAPSE_MEDIA_QUERY)
++
++  const toggleEdge = (id: string, fallback: () => void) => {
++    if (narrowViewport) {
++      window.dispatchEvent(new CustomEvent(PANE_TOGGLE_REVEAL_EVENT, { detail: { id } }))
++
++      return
++    }
++
++    fallback()
++  }
+ 
+   const toggleHaptics = () => {
+     if (!hapticsMuted) {
+@@ -71,8 +87,16 @@ export function TitlebarControls({ leftTools = [], tools = [], onOpenSettings }:
+   // swaps which pane each one toggles. Default: sessions left, file browser
+   // right. Flipped: file browser left, sessions right. Sidebar toggles never
+   // carry an active highlight — they're plain show/hide affordances.
+-  const fileBrowserEdge = { open: fileBrowserOpen, toggle: toggleFileBrowserOpen }
+-  const sessionsEdge = { open: sidebarOpen, toggle: toggleSidebarOpen }
++  const fileBrowserEdge = {
++    open: fileBrowserOpen,
++    toggle: () => toggleEdge(FILE_BROWSER_PANE_ID, toggleFileBrowserOpen)
++  }
++
++  const sessionsEdge = {
++    open: sidebarOpen,
++    toggle: () => toggleEdge(CHAT_SIDEBAR_PANE_ID, toggleSidebarOpen)
++  }
++
+   const leftEdge = panesFlipped ? fileBrowserEdge : sessionsEdge
+   const rightEdge = panesFlipped ? sessionsEdge : fileBrowserEdge
+ 
+@@ -146,7 +170,8 @@ export function TitlebarControls({ leftTools = [], tools = [], onOpenSettings }:
+     return null
+   }
+ 
+-  const visibleSystemTools = systemTools.filter(tool => !tool.hidden)
++  const visibleSystemTools = systemTools.filter(tool => !tool.hidden && (!narrowViewport || tool.id === 'settings'))
++
+   const settingsTool = visibleSystemTools.find(tool => tool.id === 'settings')
+   const visibleSystemToolsBeforeSettings = visibleSystemTools.filter(tool => tool.id !== 'settings')
+   const visiblePaneTools = tools.filter(tool => !tool.hidden)
+@@ -158,7 +183,7 @@ export function TitlebarControls({ leftTools = [], tools = [], onOpenSettings }:
+         className="fixed left-(--titlebar-controls-left) top-(--titlebar-controls-top) z-70 flex translate-y-0.5 flex-row items-center gap-x-1 pointer-events-auto select-none [-webkit-app-region:no-drag]"
+       >
+         {leftToolbarTools
+-          .filter(tool => !tool.hidden)
++          .filter(tool => !tool.hidden && (!narrowViewport || tool.id === 'sidebar'))
+           .map(tool => (
+             <TitlebarToolButton key={tool.id} navigate={navigate} tool={tool} />
+           ))}
+diff --git a/apps/desktop/src/browser-bridge.test.ts b/apps/desktop/src/browser-bridge.test.ts
+new file mode 100644
+index 0000000..13b5b32
+--- /dev/null
++++ b/apps/desktop/src/browser-bridge.test.ts
+@@ -0,0 +1,153 @@
++import { beforeEach, describe, expect, it, vi } from 'vitest'
++
++import { installBrowserBridge } from './browser-bridge'
++
++type BrowserContract = Window['hermesDesktop'] & {
++  cloud: { status: () => Promise<{ portalBaseUrl: string; signedIn: boolean }> }
++}
++
++function desktop(): BrowserContract {
++  return window.hermesDesktop as BrowserContract
++}
++
++beforeEach(() => {
++  Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: undefined, writable: true })
++  Object.defineProperty(window, '__HERMES_DESKTOP_TOKEN__', { configurable: true, value: 'test-token' })
++  vi.stubGlobal(
++    'fetch',
++    vi.fn(async (input: RequestInfo | URL) => {
++      const url = String(input)
++
++      const payload = url.includes('/api/status')
++        ? { version: '1.2.3' }
++        : url.includes('/api/git/base-branches')
++          ? { branches: [{ isDefault: true, isRemote: true, name: 'origin/main' }] }
++          : url.includes('/api/git/branches')
++            ? { branches: [{ isDefault: false, name: 'local-only' }] }
++            : url.includes('/api/fs/list')
++              ? { entries: [{ isDirectory: false, name: 'README.md', path: '/repo/README.md' }] }
++              : url.includes('/api/fs/git-root')
++                ? { root: '/repo' }
++                : {}
++
++      return new Response(JSON.stringify(payload), {
++        headers: { 'Content-Type': 'application/json' },
++        status: 200
++      })
++    })
++  )
++  vi.spyOn(window, 'open').mockImplementation(() => null)
++})
++
++describe('browser bridge contract', () => {
++  it('provides required browser-safe Desktop API groups without undefined members', async () => {
++    installBrowserBridge()
++    const api = desktop()
++
++    for (const method of [
++      'getConnection',
++      'getGatewayWsUrl',
++      'normalizePreviewTarget',
++      'watchPreviewFile',
++      'stopPreviewFileWatch',
++      'readDir',
++      'getVersion'
++    ] as const) {
++      expect(typeof api[method]).toBe('function')
++    }
++
++    for (const group of ['petOverlay', 'terminal', 'updates', 'uninstall', 'themes', 'git', 'cloud'] as const) {
++      expect(api[group]).toBeTruthy()
++    }
++
++    await expect(api.getVersion()).resolves.toEqual({
++      appVersion: '1.2.3',
++      electronVersion: 'browser',
++      hermesRoot: '',
++      nodeVersion: 'browser',
++      platform: 'web'
++    })
++  })
++
++  it('routes filesystem and Git reads through the authenticated gateway API', async () => {
++    installBrowserBridge()
++    const api = desktop()
++
++    await expect(api.readDir('/repo')).resolves.toEqual({
++      entries: [{ isDirectory: false, name: 'README.md', path: '/repo/README.md' }]
++    })
++    await expect(api.gitRoot?.('/repo/file.ts')).resolves.toBe('/repo')
++
++    expect(fetch).toHaveBeenCalledWith(
++      '/api/fs/list?path=%2Frepo',
++      expect.objectContaining({ headers: expect.objectContaining({ 'X-Hermes-Session-Token': 'test-token' }) })
++    )
++  })
++
++  it('loads start-work bases from the dedicated remote-aware gateway endpoint', async () => {
++    installBrowserBridge()
++    const api = desktop()
++
++    await expect(api.git!.baseBranchList('/repo')).resolves.toEqual([
++      { isDefault: true, isRemote: true, name: 'origin/main' }
++    ])
++
++    expect(fetch).toHaveBeenCalledWith(
++      '/api/git/base-branches?path=%2Frepo',
++      expect.objectContaining({ headers: expect.objectContaining({ 'X-Hermes-Session-Token': 'test-token' }) })
++    )
++  })
++
++  it('preserves secondary and watch semantics when opening browser session windows', async () => {
++    installBrowserBridge()
++    const api = desktop()
++
++    await expect(api.openSessionWindow('session / one', { watch: true })).resolves.toEqual({ ok: true })
++    expect(window.open).toHaveBeenCalledWith(
++      `${window.location.origin}${window.location.pathname}?win=secondary&watch=1#/session%20%2F%20one`,
++      '_blank',
++      'noopener'
++    )
++
++    await expect(api.openNewSessionWindow()).resolves.toEqual({ ok: true })
++    expect(window.open).toHaveBeenLastCalledWith(
++      `${window.location.origin}${window.location.pathname}?win=secondary&new=1#/`,
++      '_blank',
++      'noopener'
++    )
++  })
++
++  it('fails closed for connection settings that are managed by the browser deployment', async () => {
++    installBrowserBridge()
++    const api = desktop()
++    const payload = { mode: 'local' as const }
++
++    await expect(api.saveConnectionConfig(payload)).rejects.toThrow('managed by the browser deployment')
++    await expect(api.applyConnectionConfig(payload)).rejects.toThrow('managed by the browser deployment')
++    await expect(api.testConnectionConfig(payload)).rejects.toThrow('managed by the browser deployment')
++    await expect(api.probeConnectionConfig('https://example.invalid')).rejects.toThrow(
++      'managed by the browser deployment'
++    )
++    await expect(api.oauthLoginConnectionConfig('https://example.invalid')).rejects.toThrow(
++      'managed by the browser deployment'
++    )
++    await expect(api.oauthLogoutConnectionConfig()).rejects.toThrow('managed by the browser deployment')
++  })
++
++  it('fails closed for native-only terminal, update, and uninstall actions', async () => {
++    installBrowserBridge()
++    const api = desktop()
++
++    await expect(api.terminal.start()).rejects.toThrow('not available in the browser client')
++    await expect(api.updates.check()).resolves.toMatchObject({
++      message: 'Update hermes-mobile-desktop to a reviewed release.',
++      supported: false
++    })
++    await expect(api.updates.apply()).resolves.toMatchObject({
++      command: 'Update hermes-mobile-desktop to a reviewed release.',
++      error: expect.stringContaining('not available')
++    })
++    await expect(api.uninstall.run('gui')).resolves.toMatchObject({ ok: false })
++    await expect(api.cloud.status()).resolves.toEqual({ portalBaseUrl: '', signedIn: false })
++  })
++})
+diff --git a/apps/desktop/src/browser-bridge.ts b/apps/desktop/src/browser-bridge.ts
+new file mode 100644
+index 0000000..264f3de
+--- /dev/null
++++ b/apps/desktop/src/browser-bridge.ts
+@@ -0,0 +1,653 @@
++import type {
++  DesktopActiveProfile,
++  DesktopBootProgress,
++  DesktopConnectionConfig,
++  DesktopUninstallMode,
++  DesktopUninstallResult,
++  DesktopUninstallSummary,
++  DesktopUpdateApplyOptions,
++  DesktopUpdateApplyResult,
++  DesktopUpdateStatus,
++  HermesApiRequest,
++  HermesConnection,
++  HermesGitBranch,
++  HermesGitWorktree,
++  HermesReadDirResult,
++  HermesReadFileTextResult,
++  HermesRepoStatus,
++  HermesReviewList,
++  HermesReviewScope,
++  HermesReviewShipInfo,
++  HermesSelectPathsOptions
++} from './global'
++
++type BrowserBootstrapWindow = Window & {
++  __HERMES_DESKTOP_TOKEN__?: string
++}
++
++const PROFILE_STORAGE_KEY = 'hermes.desktop.web.profile'
++const UPLOAD_ROOT = '/tmp/hermes-desktop-web'
++const noopOff = () => undefined
++
++function token(): string {
++  const value = (window as BrowserBootstrapWindow).__HERMES_DESKTOP_TOKEN__?.trim()
++
++  if (!value) {
++    throw new Error('Hermes Desktop Web was served without a gateway token.')
++  }
++
++  return value
++}
++
++function selectedProfile(): string | null {
++  return window.localStorage.getItem(PROFILE_STORAGE_KEY)?.trim() || null
++}
++
++function withProfile(path: string, profile?: null | string): string {
++  if (!profile) {
++    return path
++  }
++
++  const url = new URL(path, window.location.origin)
++
++  if (!url.searchParams.has('profile')) {
++    url.searchParams.set('profile', profile)
++  }
++
++  return `${url.pathname}${url.search}${url.hash}`
++}
++
++function endpoint(path: string, params: Record<string, boolean | null | string | undefined> = {}): string {
++  const query = new URLSearchParams()
++
++  for (const [name, value] of Object.entries(params)) {
++    if (value !== null && value !== undefined && value !== '') {
++      query.set(name, String(value))
++    }
++  }
++
++  const suffix = query.toString()
++
++  return suffix ? `${path}?${suffix}` : path
++}
++
++function nativeOnly(feature: string): Error {
++  return new Error(`${feature} is not available in the browser client.`)
++}
++
++function deploymentManaged(feature: string): Error {
++  return new Error(`${feature} are managed by the browser deployment.`)
++}
++
++async function api<T>({ body, method = 'GET', path, profile, timeoutMs = 30_000 }: HermesApiRequest): Promise<T> {
++  if (!path.startsWith('/api/')) {
++    throw new Error(`Hermes Desktop Web refused a non-API path: ${path}`)
++  }
++
++  const controller = new AbortController()
++  const timer = window.setTimeout(() => controller.abort(), timeoutMs)
++
++  try {
++    const response = await fetch(withProfile(path, profile), {
++      body: body === undefined ? undefined : JSON.stringify(body),
++      credentials: 'same-origin',
++      headers: {
++        Accept: 'application/json',
++        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
++        'X-Hermes-Session-Token': token()
++      },
++      method,
++      signal: controller.signal
++    })
++
++    const text = await response.text()
++    let payload: unknown = null
++
++    if (text) {
++      try {
++        payload = JSON.parse(text)
++      } catch {
++        payload = text
++      }
++    }
++
++    if (!response.ok) {
++      const detail =
++        payload && typeof payload === 'object' && 'detail' in payload
++          ? String((payload as { detail?: unknown }).detail)
++          : typeof payload === 'string'
++            ? payload
++            : response.statusText
++
++      throw new Error(`${response.status}: ${detail || 'Hermes request failed'}`)
++    }
++
++    return payload as T
++  } finally {
++    window.clearTimeout(timer)
++  }
++}
++
++function wsUrl(profile?: null | string): string {
++  const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
++  const query = new URLSearchParams({ token: token() })
++
++  if (profile) {
++    query.set('profile', profile)
++  }
++
++  return `${scheme}//${window.location.host}/api/ws?${query.toString()}`
++}
++
++function connection(profile?: null | string): HermesConnection {
++  return {
++    authMode: 'token',
++    baseUrl: window.location.origin,
++    isFullscreen: false,
++    logs: [],
++    mode: 'remote',
++    nativeOverlayWidth: 0,
++    profile: profile || selectedProfile() || undefined,
++    source: 'settings',
++    token: token(),
++    windowButtonPosition: null,
++    wsUrl: wsUrl(profile || selectedProfile())
++  }
++}
++
++const bootProgress = (): DesktopBootProgress => ({
++  error: null,
++  fakeMode: false,
++  message: 'Hermes Desktop Web is ready',
++  phase: 'renderer.ready',
++  progress: 100,
++  running: false,
++  timestamp: Date.now()
++})
++
++function connectionConfig(profile?: null | string): DesktopConnectionConfig {
++  const config: DesktopConnectionConfig & { cloudOrg: string } = {
++    cloudOrg: '',
++    envOverride: true,
++    mode: 'remote',
++    profile: profile || null,
++    remoteAuthMode: 'token',
++    remoteOauthConnected: false,
++    remoteTokenPreview: 'Tailnet session',
++    remoteTokenSet: true,
++    remoteUrl: window.location.origin
++  }
++
++  return config
++}
++
++async function writeClipboard(text: string): Promise<boolean> {
++  await navigator.clipboard.writeText(text)
++
++  return true
++}
++
++async function uploadBlob(blob: Blob, filename: string): Promise<string> {
++  const safeName = filename.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+/, '') || 'attachment.bin'
++  const path = `${UPLOAD_ROOT}/${crypto.randomUUID()}-${safeName}`
++  const bytes = new Uint8Array(await blob.arrayBuffer())
++  let binary = ''
++
++  for (let i = 0; i < bytes.length; i += 0x8000) {
++    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
++  }
++
++  const dataUrl = `data:${blob.type || 'application/octet-stream'};base64,${btoa(binary)}`
++
++  const result = await api<{ path: string }>({
++    body: { data_url: dataUrl, overwrite: true, path },
++    method: 'POST',
++    path: '/api/files/upload'
++  })
++
++  return result.path || path
++}
++
++async function selectPaths(options: HermesSelectPathsOptions = {}): Promise<string[]> {
++  if (options.directories) {
++    return []
++  }
++
++  return new Promise(resolve => {
++    const input = document.createElement('input')
++    input.type = 'file'
++    input.multiple = Boolean(options.multiple)
++    const extensions = options.filters?.flatMap(filter => filter.extensions || []) ?? []
++
++    if (extensions.length) {
++      input.accept = extensions.map(ext => `.${ext.replace(/^\./, '')}`).join(',')
++    }
++
++    input.addEventListener(
++      'change',
++      () => {
++        void Promise.all([...Array.from(input.files || [])].map(file => uploadBlob(file, file.name)))
++          .then(resolve)
++          .catch(error => {
++            console.error('[Hermes Desktop Web] upload failed', error)
++            resolve([])
++          })
++      },
++      { once: true }
++    )
++    input.click()
++  })
++}
++
++function installViewportSync(): void {
++  const sync = () => {
++    const viewport = window.visualViewport
++    const height = viewport?.height ?? window.innerHeight
++    document.documentElement.style.setProperty('--hermes-viewport-height', `${Math.round(height)}px`)
++  }
++
++  sync()
++  window.addEventListener('resize', sync, { passive: true })
++  window.visualViewport?.addEventListener('resize', sync, { passive: true })
++  window.visualViewport?.addEventListener('scroll', sync, { passive: true })
++}
++
++export function installBrowserBridge(): void {
++  if (window.hermesDesktop || !/^https?:$/.test(window.location.protocol)) {
++    return
++  }
++
++  document.documentElement.dataset.hermesBrowser = 'true'
++  installViewportSync()
++
++  const bridge = {
++    api,
++    getConnection: async (profile?: null | string) => connection(profile),
++    revalidateConnection: async () => ({ ok: true, rebuilt: false }),
++    touchBackend: async () => ({ ok: true }),
++    getGatewayWsUrl: async (profile?: null | string) => wsUrl(profile || selectedProfile()),
++    openSessionWindow: async (sessionId: string, opts?: { watch?: boolean }) => {
++      const query = `?win=secondary${opts?.watch ? '&watch=1' : ''}`
++      window.open(
++        `${window.location.origin}${window.location.pathname}${query}#/${encodeURIComponent(sessionId)}`,
++        '_blank',
++        'noopener'
++      )
++
++      return { ok: true }
++    },
++    openNewSessionWindow: async () => {
++      window.open(`${window.location.origin}${window.location.pathname}?win=secondary&new=1#/`, '_blank', 'noopener')
++
++      return { ok: true }
++    },
++    petOverlay: {
++      open: async () => ({ ok: false }),
++      close: async () => ({ ok: true }),
++      setBounds: () => undefined,
++      setIgnoreMouse: () => undefined,
++      setFocusable: () => undefined,
++      pushState: () => undefined,
++      control: () => undefined,
++      onState: () => noopOff,
++      onControl: () => noopOff
++    },
++    getBootProgress: async () => bootProgress(),
++    onBootProgress: () => noopOff,
++    onBackendExit: () => noopOff,
++    onPreviewFileChanged: () => noopOff,
++    onPowerResume: (callback: () => void) => {
++      const listener = () => callback()
++      window.addEventListener('pageshow', listener)
++
++      return () => window.removeEventListener('pageshow', listener)
++    },
++    getConnectionConfig: async (profile?: null | string) => connectionConfig(profile),
++    saveConnectionConfig: async () => {
++      throw deploymentManaged('Connection settings')
++    },
++    applyConnectionConfig: async () => {
++      throw deploymentManaged('Connection settings')
++    },
++    testConnectionConfig: async () => {
++      throw deploymentManaged('Connection settings')
++    },
++    probeConnectionConfig: async () => {
++      throw deploymentManaged('Connection settings')
++    },
++    oauthLoginConnectionConfig: async () => {
++      throw deploymentManaged('Connection settings')
++    },
++    oauthLogoutConnectionConfig: async () => {
++      throw deploymentManaged('Connection settings')
++    },
++    cloud: {
++      status: async () => ({ portalBaseUrl: '', signedIn: false }),
++      login: async () => ({ ok: false, portalBaseUrl: '', signedIn: false }),
++      logout: async () => ({ ok: true, portalBaseUrl: '', signedIn: false }),
++      discover: async () => ({ agents: [], needsOrgSelection: false as const, org: null }),
++      agentSignIn: async (dashboardUrl: string) => ({ baseUrl: dashboardUrl, connected: false })
++    },
++    profile: {
++      get: async (): Promise<DesktopActiveProfile> => ({ profile: selectedProfile() }),
++      set: async (name: string | null): Promise<DesktopActiveProfile> => {
++        if (name) {
++          window.localStorage.setItem(PROFILE_STORAGE_KEY, name)
++        } else {
++          window.localStorage.removeItem(PROFILE_STORAGE_KEY)
++        }
++
++        return { profile: name }
++      }
++    },
++    notify: async (payload: { title?: string; body?: string }) => {
++      if (!('Notification' in window)) {
++        return false
++      }
++
++      if (Notification.permission === 'default') {
++        await Notification.requestPermission()
++      }
++
++      if (Notification.permission !== 'granted') {
++        return false
++      }
++
++      new Notification(payload.title || 'Hermes', { body: payload.body || '' })
++
++      return true
++    },
++    requestMicrophoneAccess: async () => true,
++    readFileDataUrl: async (filePath: string) => {
++      const result = await api<{ dataUrl?: string }>({
++        path: `/api/fs/read-data-url?path=${encodeURIComponent(filePath)}`
++      })
++
++      return result.dataUrl || ''
++    },
++    readFileText: (filePath: string) =>
++      api<HermesReadFileTextResult>({ path: `/api/fs/read-text?path=${encodeURIComponent(filePath)}` }),
++    selectPaths,
++    writeClipboard,
++    saveImageFromUrl: async (url: string) => {
++      const response = await fetch(url)
++      await uploadBlob(
++        await response.blob(),
++        new URL(url, window.location.origin).pathname.split('/').pop() || 'image.png'
++      )
++
++      return true
++    },
++    saveImageBuffer: async (data: ArrayBuffer | Uint8Array, ext: string) =>
++      uploadBlob(
++        new Blob([data as BlobPart], { type: `image/${ext.replace(/^\./, '')}` }),
++        `image.${ext.replace(/^\./, '')}`
++      ),
++    saveClipboardImage: async () => {
++      if (!navigator.clipboard.read) {
++        return ''
++      }
++
++      for (const item of await navigator.clipboard.read()) {
++        const type = item.types.find(candidate => candidate.startsWith('image/'))
++
++        if (type) {
++          return uploadBlob(await item.getType(type), `clipboard.${type.split('/')[1] || 'png'}`)
++        }
++      }
++
++      return ''
++    },
++    getPathForFile: () => '',
++    normalizePreviewTarget: async (target: string) => {
++      const value = target.trim()
++
++      if (!value) {
++        return null
++      }
++
++      if (/^https?:\/\//i.test(value)) {
++        const url = new URL(value)
++
++        return { kind: 'url' as const, label: url.hostname, source: value, url: value }
++      }
++
++      return {
++        kind: 'file' as const,
++        label: value.split('/').pop() || value,
++        path: value,
++        previewKind: 'text' as const,
++        source: value,
++        url: value
++      }
++    },
++    watchPreviewFile: async (url: string) => ({ id: crypto.randomUUID(), path: url }),
++    stopPreviewFileWatch: async () => true,
++    openExternal: async (url: string) => void window.open(url, '_blank', 'noopener,noreferrer'),
++    openPreviewInBrowser: async (url: string) => void window.open(url, '_blank', 'noopener,noreferrer'),
++    fetchLinkTitle: async (url: string) => new URL(url).hostname,
++    sanitizeWorkspaceCwd: async (cwd?: null | string) => ({ cwd: cwd?.trim() || '', sanitized: false }),
++    settings: {
++      getDefaultProjectDir: async () => {
++        const result = await api<{ cwd: string }>({ path: '/api/fs/default-cwd' })
++
++        return { defaultLabel: 'Gateway default', dir: null, resolvedCwd: result.cwd }
++      },
++      pickDefaultProjectDir: async () => ({ canceled: true, dir: null }),
++      setDefaultProjectDir: async (dir: null | string) => ({ dir })
++    },
++    revealLogs: async () => ({ error: 'Open Logs from Command Center in the web client.', ok: false, path: '' }),
++    getRecentLogs: async () => ({ lines: [], path: '' }),
++    readDir: (path: string): Promise<HermesReadDirResult> => api({ path: endpoint('/api/fs/list', { path }) }),
++    gitRoot: async (path: string) => {
++      const result = await api<{ root: null | string }>({ path: endpoint('/api/fs/git-root', { path }) })
++
++      return result.root
++    },
++    git: {
++      worktreeList: async (repoPath: string) => {
++        const result = await api<{ worktrees: HermesGitWorktree[] }>({
++          path: endpoint('/api/git/worktrees', { path: repoPath })
++        })
++
++        return result.worktrees
++      },
++      worktreeAdd: (
++        repoPath: string,
++        options: { name?: string; branch?: string; base?: string; existingBranch?: string } = {}
++      ) =>
++        api<{ path: string; branch: string; repoRoot: string }>({
++          body: { path: repoPath, ...options },
++          method: 'POST',
++          path: '/api/git/worktree/add'
++        }),
++      worktreeRemove: (repoPath: string, worktreePath: string, options: { force?: boolean } = {}) =>
++        api<{ removed: string }>({
++          body: { force: Boolean(options.force), path: repoPath, worktreePath },
++          method: 'POST',
++          path: '/api/git/worktree/remove'
++        }),
++      branchSwitch: (repoPath: string, branch: string) =>
++        api<{ branch: string }>({
++          body: { branch, path: repoPath },
++          method: 'POST',
++          path: '/api/git/branch/switch'
++        }),
++      branchList: async (repoPath: string) => {
++        const result = await api<{ branches: HermesGitBranch[] }>({
++          path: endpoint('/api/git/branches', { path: repoPath })
++        })
++
++        return result.branches
++      },
++      baseBranchList: async (repoPath: string) => {
++        const result = await api<{ branches: Array<HermesGitBranch & { isRemote?: boolean }> }>({
++          path: endpoint('/api/git/base-branches', { path: repoPath })
++        })
++
++        return result.branches.map(branch => ({
++          isDefault: branch.isDefault,
++          isRemote: Boolean(branch.isRemote),
++          name: branch.name
++        }))
++      },
++      repoStatus: (repoPath: string) =>
++        api<HermesRepoStatus>({ path: endpoint('/api/git/status', { path: repoPath }) }),
++      fileDiff: async (repoPath: string, filePath: string) => {
++        const result = await api<{ diff: string }>({
++          path: endpoint('/api/git/file-diff', { file: filePath, path: repoPath })
++        })
++
++        return result.diff
++      },
++      review: {
++        list: (repoPath: string, scope: HermesReviewScope, baseRef?: null | string) =>
++          api<HermesReviewList>({
++            path: endpoint('/api/git/review/list', { base: baseRef, path: repoPath, scope })
++          }),
++        diff: async (
++          repoPath: string,
++          filePath: string,
++          scope: HermesReviewScope,
++          baseRef?: null | string,
++          staged?: boolean
++        ) => {
++          const result = await api<{ diff: string }>({
++            path: endpoint('/api/git/review/diff', {
++              base: baseRef,
++              file: filePath,
++              path: repoPath,
++              scope,
++              staged
++            })
++          })
++
++          return result.diff
++        },
++        stage: (repoPath: string, filePath?: null | string) =>
++          api<{ ok: boolean }>({
++            body: { file: filePath, path: repoPath },
++            method: 'POST',
++            path: '/api/git/review/stage'
++          }),
++        unstage: (repoPath: string, filePath?: null | string) =>
++          api<{ ok: boolean }>({
++            body: { file: filePath, path: repoPath },
++            method: 'POST',
++            path: '/api/git/review/unstage'
++          }),
++        revert: (repoPath: string, filePath?: null | string) =>
++          api<{ ok: boolean }>({
++            body: { file: filePath, path: repoPath },
++            method: 'POST',
++            path: '/api/git/review/revert'
++          }),
++        revParse: async (repoPath: string, ref?: null | string) => {
++          const result = await api<{ sha: null | string }>({
++            path: endpoint('/api/git/review/rev-parse', { path: repoPath, ref })
++          })
++
++          return result.sha
++        },
++        commit: (repoPath: string, message: string, push: boolean) =>
++          api<{ ok: boolean }>({
++            body: { message, path: repoPath, push },
++            method: 'POST',
++            path: '/api/git/review/commit'
++          }),
++        commitContext: (repoPath: string) =>
++          api<{ diff: string; recent: string }>({
++            path: endpoint('/api/git/review/commit-context', { path: repoPath })
++          }),
++        push: (repoPath: string) =>
++          api<{ ok: boolean }>({ body: { path: repoPath }, method: 'POST', path: '/api/git/review/push' }),
++        shipInfo: (repoPath: string) =>
++          api<HermesReviewShipInfo>({ path: endpoint('/api/git/review/ship-info', { path: repoPath }) }),
++        createPr: (repoPath: string) =>
++          api<{ url: string }>({ body: { path: repoPath }, method: 'POST', path: '/api/git/review/create-pr' })
++      },
++      scanRepos: async () => []
++    },
++    terminal: {
++      cwd: async () => null,
++      dispose: async () => false,
++      onData: () => noopOff,
++      onExit: () => noopOff,
++      resize: async () => false,
++      start: async () => {
++        throw nativeOnly('The integrated terminal')
++      },
++      write: async () => false
++    },
++    getBootstrapState: async () => ({
++      active: false,
++      completedAt: null,
++      error: null,
++      log: [],
++      manifest: null,
++      startedAt: null,
++      stages: {},
++      unsupportedPlatform: null
++    }),
++    resetBootstrap: async () => ({ ok: true }),
++    repairBootstrap: async () => ({ ok: true }),
++    cancelBootstrap: async () => ({ cancelled: true, ok: true }),
++    onBootstrapEvent: () => noopOff,
++    getVersion: async () => {
++      const status = await api<{ version?: string }>({ path: '/api/status' })
++
++      return {
++        appVersion: status.version || 'web',
++        electronVersion: 'browser',
++        hermesRoot: '',
++        nodeVersion: 'browser',
++        platform: 'web'
++      }
++    },
++    getRemoteDisplayReason: async () => null,
++    updates: {
++      check: async (): Promise<DesktopUpdateStatus> => ({
++        message: 'Update hermes-mobile-desktop to a reviewed release.',
++        reason: 'Desktop self-update is not available in the browser client.',
++        supported: false
++      }),
++      apply: async (_options?: DesktopUpdateApplyOptions): Promise<DesktopUpdateApplyResult> => ({
++        command: 'Update hermes-mobile-desktop to a reviewed release.',
++        error: 'Desktop self-update is not available in the browser client.',
++        manual: true,
++        ok: false
++      }),
++      getBranch: async () => ({ branch: '' }),
++      setBranch: async (name: string) => ({ branch: name }),
++      onProgress: () => noopOff
++    },
++    uninstall: {
++      summary: async (): Promise<DesktopUninstallSummary> => ({
++        agent_installed: false,
++        gui_installed: false,
++        hermes_home: '',
++        packaged_app_paths: [],
++        platform: 'web',
++        probe: 'Browser clients cannot inspect gateway installation paths.',
++        source_built_artifacts: [],
++        userdata_dir: '',
++        userdata_exists: false
++      }),
++      run: async (_mode: DesktopUninstallMode): Promise<DesktopUninstallResult> => ({
++        error: 'Uninstall is not available in the browser client.',
++        ok: false
++      })
++    },
++    themes: {
++      fetchMarketplace: async (id: string) => ({ extensionId: id, displayName: id, themes: [] }),
++      searchMarketplace: async () => []
++    },
++    onConnectionApplied: () => noopOff,
++    signalDeepLinkReady: async () => ({ ok: true }),
++    writeTextFile: (filePath: string, content: string) =>
++      api<{ path: string }>({ body: { content, path: filePath }, method: 'POST', path: '/api/fs/write-text' })
++  }
++
++  const contract: Window['hermesDesktop'] = bridge
++  window.hermesDesktop = contract
++}
+diff --git a/apps/desktop/src/components/pane-shell/pane-shell.test.tsx b/apps/desktop/src/components/pane-shell/pane-shell.test.tsx
+index 0517b08..759f8ac 100644
+--- a/apps/desktop/src/components/pane-shell/pane-shell.test.tsx
++++ b/apps/desktop/src/components/pane-shell/pane-shell.test.tsx
+@@ -107,7 +107,7 @@ describe('PaneShell composition', () => {
+ 
+     const rendered = render(
+       <PaneShell>
+-        <Pane id="files" side="left" width="240px">
++        <Pane id="files" resizable={true} side="left" width="240px">
+           files
+         </Pane>
+         <PaneMain>main</PaneMain>
+diff --git a/apps/desktop/src/components/pane-shell/pane-shell.tsx b/apps/desktop/src/components/pane-shell/pane-shell.tsx
+index 31a3f43..4adc303 100644
+--- a/apps/desktop/src/components/pane-shell/pane-shell.tsx
++++ b/apps/desktop/src/components/pane-shell/pane-shell.tsx
+@@ -500,6 +500,13 @@ export function Pane({
+         ref={paneRef}
+         style={{ gridColumn: slot.gridColumn, gridRow: slot.gridRow }}
+       >
++        <button
++          aria-label={`Close ${id}`}
++          className="pointer-events-none fixed inset-0 z-20 bg-black/0 opacity-0 transition-[opacity,background-color] duration-200 group-data-[forced]/reveal:pointer-events-auto group-data-[forced]/reveal:bg-black/45 group-data-[forced]/reveal:opacity-100"
++          onClick={() => setForced(false)}
++          tabIndex={forced ? 0 : -1}
++          type="button"
++        />
+         <div
+           aria-hidden="true"
+           className="pointer-events-auto absolute inset-y-0 z-30 [-webkit-app-region:no-drag]"
+diff --git a/apps/desktop/src/main.tsx b/apps/desktop/src/main.tsx
+index 5b7621a..06641db 100644
+--- a/apps/desktop/src/main.tsx
++++ b/apps/desktop/src/main.tsx
+@@ -8,6 +8,7 @@ import { createRoot } from 'react-dom/client'
+ import { HashRouter } from 'react-router-dom'
+ 
+ import App from './app'
++import { installBrowserBridge } from './browser-bridge'
+ import { ErrorBoundary } from './components/error-boundary'
+ import { HapticsProvider } from './components/haptics-provider'
+ import { I18nProvider } from './i18n'
+@@ -15,6 +16,10 @@ import { installClipboardShim } from './lib/clipboard'
+ import { queryClient } from './lib/query-client'
+ import { ThemeProvider } from './themes/context'
+ 
++// The packaged app receives this API from Electron's preload. Over HTTPS the
++// same renderer installs a same-origin gateway adapter instead, allowing the
++// real Hermes Desktop UI to run as a code-server-style web client.
++installBrowserBridge()
+ installClipboardShim()
+ 
+ // Dev-only: install __PERF_DRIVE__ + __PERF_PROBE__ on window so the
+diff --git a/apps/desktop/src/styles.css b/apps/desktop/src/styles.css
+index e5477bb..4e82ede 100644
+--- a/apps/desktop/src/styles.css
++++ b/apps/desktop/src/styles.css
+@@ -1827,3 +1827,145 @@ text-* variant utilities. */ .btn-arc {
+     opacity: 0.4;
+   }
+ }
++
++/* -------------------------------------------------------------------------- */
++/* Hermes Desktop Web: touch-first shell around the real Desktop renderer.     */
++/* Kept behind a runtime data flag so packaged Electron geometry is unchanged.  */
++/* -------------------------------------------------------------------------- */
++html[data-hermes-browser='true'],
++html[data-hermes-browser='true'] body,
++html[data-hermes-browser='true'] #root {
++  width: 100%;
++  height: 100%;
++  overflow: hidden;
++  overscroll-behavior: none;
++  touch-action: manipulation;
++}
++
++html[data-hermes-browser='true'] body {
++  position: fixed;
++  inset: 0;
++  background: var(--ui-chat-surface-background, #101010);
++}
++
++html[data-hermes-browser='true'] [data-slot='sidebar-wrapper'] {
++  height: var(--hermes-viewport-height, 100dvh) !important;
++  min-height: 0 !important;
++}
++
++html[data-hermes-browser='true'] button,
++html[data-hermes-browser='true'] [role='button'],
++html[data-hermes-browser='true'] a {
++  -webkit-tap-highlight-color: transparent;
++}
++
++@media (max-width: 767px), (pointer: coarse) and (max-width: 1024px) {
++  html[data-hermes-browser='true'] [data-slot='sidebar-wrapper'] {
++    --titlebar-height: calc(3.25rem + env(safe-area-inset-top)) !important;
++    --titlebar-control-size: 2.75rem !important;
++    --titlebar-controls-left: max(0.25rem, env(safe-area-inset-left)) !important;
++    --titlebar-controls-top: calc(0.25rem + env(safe-area-inset-top)) !important;
++    --titlebar-tools-right: max(0.25rem, env(safe-area-inset-right)) !important;
++    --composer-control-size: 2.75rem;
++    --composer-control-primary-size: 2.75rem;
++    --composer-shell-pad-block-end: max(0.65rem, env(safe-area-inset-bottom));
++  }
++
++  html[data-hermes-browser='true'] [aria-label='Window controls'] button,
++  html[data-hermes-browser='true'] [aria-label='App controls'] button {
++    height: 2.75rem !important;
++    min-height: 2.75rem !important;
++  }
++
++  html[data-hermes-browser='true'] [data-slot='aui_intro'] .fit-text {
++    --fit-min: 1rem !important;
++    width: calc(100% - 2rem) !important;
++    font-size: min(2rem, 8vw) !important;
++    letter-spacing: 0.01em !important;
++    line-height: 0.95 !important;
++    white-space: nowrap;
++  }
++
++  html[data-hermes-browser='true'] [data-slot='aui_intro'] > div > p:last-child {
++    margin-inline: auto;
++    max-width: 21rem;
++    padding-inline: 0.75rem;
++    font-size: 0.95rem;
++    line-height: 1.45;
++  }
++
++  html[data-hermes-browser='true'] [data-slot='overlay-backdrop'] {
++    padding: max(0.5rem, env(safe-area-inset-top)) max(0.5rem, env(safe-area-inset-right))
++      max(0.5rem, env(safe-area-inset-bottom)) max(0.5rem, env(safe-area-inset-left)) !important;
++  }
++
++  html[data-hermes-browser='true'] [data-slot='overlay-card'] {
++    border-radius: 0.9rem;
++  }
++
++  html[data-hermes-browser='true'] [data-slot='statusbar'] {
++    display: none;
++  }
++
++  html[data-hermes-browser='true'] [data-slot='composer-root'] {
++    width: calc(100% - 0.75rem) !important;
++    padding-top: 0.375rem;
++  }
++
++  html[data-hermes-browser='true'] [data-slot='composer-surface'] {
++    border-radius: 1.125rem;
++    box-shadow:
++      0 12px 32px rgb(0 0 0 / 24%),
++      0 0 0 1px color-mix(in srgb, var(--ui-stroke-secondary) 60%, transparent);
++  }
++
++  html[data-hermes-browser='true'] [data-slot='composer-fade'] {
++    --composer-surface-pad-x: 0.75rem;
++    --composer-surface-pad-y: 0.625rem;
++  }
++
++  html[data-hermes-browser='true'] [contenteditable='true'] {
++    min-height: 2.4rem;
++    max-height: min(32dvh, 14rem);
++    font-size: 1rem;
++    line-height: 1.45;
++  }
++
++  html[data-hermes-browser='true'] [data-slot='composer-model-pill'],
++  html[data-hermes-browser='true'] [data-slot='composer-dictation'],
++  html[data-hermes-browser='true'] [data-slot='composer-auto-speak'] {
++    display: none;
++  }
++
++  html[data-hermes-browser='true'] [data-pane-hover-reveal] > div:last-child {
++    width: min(88vw, 22rem) !important;
++    max-width: calc(100vw - 2.75rem);
++  }
++
++  html[data-hermes-browser='true'] [data-pane-reveal-trigger] {
++    display: none;
++  }
++
++  html[data-hermes-browser='true'] [data-pane-main='true'] {
++    min-width: 0;
++  }
++
++  html[data-hermes-browser='true'] [data-slot='aui_user-message-root'],
++  html[data-hermes-browser='true'] [data-slot='aui_assistant-message-content'] {
++    max-width: 100%;
++  }
++
++  html[data-hermes-browser='true'] [data-slot='dialog-content'],
++  html[data-hermes-browser='true'] [data-slot='command-dialog-content'] {
++    width: calc(100vw - 1rem);
++    max-width: calc(100vw - 1rem);
++    max-height: calc(var(--hermes-viewport-height, 100dvh) - 1rem - env(safe-area-inset-top));
++    border-radius: 1rem;
++  }
++
++  html[data-hermes-browser='true'] input,
++  html[data-hermes-browser='true'] textarea,
++  html[data-hermes-browser='true'] select {
++    font-size: 1rem;
++  }
++}
+diff --git a/hermes_cli/web_server.py b/hermes_cli/web_server.py
+index 175ab75..e898fe1 100644
+--- a/hermes_cli/web_server.py
++++ b/hermes_cli/web_server.py
+@@ -2346,6 +2346,14 @@ class GitBranchSwitchBody(BaseModel):
+     branch: str
+ 
+ 
++@app.get("/api/desktop-web/compat")
++async def desktop_web_compat_route():
++    return {
++        "baseline": "569b912d7d0931c7256e9f5fb326609e9deda377",
++        "capabilities": ["browser-bridge-v1", "git-base-branches"],
++    }
++
++
+ @app.get("/api/git/status")
+ async def git_status_route(path: str):
+     return await _git_op(_web_git.repo_status, _git_path(path))

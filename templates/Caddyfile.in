@@ -1,0 +1,58 @@
+{
+	admin off
+	auto_https off
+}
+
+:@WEB_PORT@ {
+	bind 127.0.0.1
+	encode zstd gzip
+
+	root * "@DIST_ROOT@"
+
+	@api path /api/*
+	handle @api {
+		reverse_proxy http://127.0.0.1:@GATEWAY_PORT@ {
+			# Hermes validates browser requests against its loopback-only bind.
+			header_up Host "127.0.0.1:@GATEWAY_PORT@"
+			header_up Origin "http://127.0.0.1:@GATEWAY_PORT@"
+			header_up X-Forwarded-For "127.0.0.1"
+			header_up X-Forwarded-Host "127.0.0.1:@GATEWAY_PORT@"
+			header_up X-Forwarded-Proto "http"
+			header_up X-Real-IP "127.0.0.1"
+		}
+	}
+
+	@asset_file {
+		path /assets/*
+		file {path}
+	}
+	handle @asset_file {
+		file_server
+	}
+
+	@asset_missing {
+		path /assets/*
+		not file {path}
+	}
+	handle @asset_missing {
+		respond "Not Found" 404
+	}
+
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+
+	header {
+		-Server
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+		Permissions-Policy "camera=(), geolocation=(), microphone=(self)"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' ws: wss: https:; media-src 'self' blob: data:; worker-src 'self' blob:; frame-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+	}
+
+	@private not path /assets/*
+	header @private Cache-Control "private, no-store"
+	header @asset_file Cache-Control "public, max-age=31536000, immutable"
+	header @asset_missing Cache-Control "private, no-store"
+}

@@ -1,0 +1,17 @@
+# Managed by hermes-mobile-desktop
+[Unit]
+Description=Hermes Desktop Web browser service
+After=network-online.target hermes-desktop-web-gateway.service
+Wants=network-online.target
+Requires=hermes-desktop-web-gateway.service
+
+[Service]
+Type=simple
+EnvironmentFile=@ENV_FILE_SYSTEMD@
+ExecStartPre=/usr/bin/python3 "@STAGE_SCRIPT@" --env-file "@ENV_FILE@"
+ExecStart="@CADDY_BIN@" run --config "@CADDYFILE@" --adapter caddyfile
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
