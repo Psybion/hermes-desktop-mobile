@@ -23,7 +23,7 @@ Results:
 - pinned upstream fetch and patch application: passed
 - Desktop TypeScript checks: passed
 - ESLint over every changed Desktop source/test file: passed
-- targeted UI tests: 71 passed in 12 files, including browser window semantics, fail-closed deployment-managed settings, and remote-aware base-branch routing
+- targeted UI tests: 72 passed in 12 files, including browser popup failure reporting, named-session reuse/focus semantics, fail-closed deployment-managed settings, and remote-aware base-branch routing
 - Desktop platform tests: 413 passed, 1 skipped in 37 files
 - production Vite/Electron build and artifact assertion: passed
 

@@ -208,10 +208,10 @@ index fb0cae4..1724f2f 100644
            ))}
 diff --git a/apps/desktop/src/browser-bridge.test.ts b/apps/desktop/src/browser-bridge.test.ts
 new file mode 100644
-index 0000000..13b5b32
+index 0000000..ada882e
 --- /dev/null
 +++ b/apps/desktop/src/browser-bridge.test.ts
-@@ -0,0 +1,153 @@
+@@ -0,0 +1,167 @@
 +import { beforeEach, describe, expect, it, vi } from 'vitest'
 +
 +import { installBrowserBridge } from './browser-bridge'
@@ -313,22 +313,36 @@ index 0000000..13b5b32
 +  })
 +
 +  it('preserves secondary and watch semantics when opening browser session windows', async () => {
++    const focus = vi.fn()
++    const opened = { focus, opener: window } as unknown as Window
++    vi.mocked(window.open).mockReturnValue(opened)
 +    installBrowserBridge()
 +    const api = desktop()
 +
 +    await expect(api.openSessionWindow('session / one', { watch: true })).resolves.toEqual({ ok: true })
 +    expect(window.open).toHaveBeenCalledWith(
 +      `${window.location.origin}${window.location.pathname}?win=secondary&watch=1#/session%20%2F%20one`,
-+      '_blank',
-+      'noopener'
++      'hermes-session-session%20%2F%20one'
 +    )
 +
 +    await expect(api.openNewSessionWindow()).resolves.toEqual({ ok: true })
 +    expect(window.open).toHaveBeenLastCalledWith(
 +      `${window.location.origin}${window.location.pathname}?win=secondary&new=1#/`,
-+      '_blank',
-+      'noopener'
++      '_blank'
 +    )
++    expect(opened.opener).toBeNull()
++    expect(focus).toHaveBeenCalledTimes(2)
++  })
++
++  it('reports blocked browser popups instead of claiming success', async () => {
++    installBrowserBridge()
++    const api = desktop()
++
++    await expect(api.openSessionWindow('blocked-session')).resolves.toEqual({
++      error: 'popup-blocked',
++      ok: false
++    })
++    await expect(api.openNewSessionWindow()).resolves.toEqual({ error: 'popup-blocked', ok: false })
 +  })
 +
 +  it('fails closed for connection settings that are managed by the browser deployment', async () => {
@@ -367,10 +381,10 @@ index 0000000..13b5b32
 +})
 diff --git a/apps/desktop/src/browser-bridge.ts b/apps/desktop/src/browser-bridge.ts
 new file mode 100644
-index 0000000..264f3de
+index 0000000..e1a697e
 --- /dev/null
 +++ b/apps/desktop/src/browser-bridge.ts
-@@ -0,0 +1,653 @@
+@@ -0,0 +1,661 @@
 +import type {
 +  DesktopActiveProfile,
 +  DesktopBootProgress,
@@ -450,6 +464,19 @@ index 0000000..264f3de
 +
 +function deploymentManaged(feature: string): Error {
 +  return new Error(`${feature} are managed by the browser deployment.`)
++}
++
++function openBrowserWindow(url: string, target: string): { error?: string; ok: boolean } {
++  const opened = window.open(url, target)
++
++  if (!opened) {
++    return { error: 'popup-blocked', ok: false }
++  }
++
++  opened.opener = null
++  opened.focus()
++
++  return { ok: true }
 +}
 +
 +async function api<T>({ body, method = 'GET', path, profile, timeoutMs = 30_000 }: HermesApiRequest): Promise<T> {
@@ -641,19 +668,14 @@ index 0000000..264f3de
 +    getGatewayWsUrl: async (profile?: null | string) => wsUrl(profile || selectedProfile()),
 +    openSessionWindow: async (sessionId: string, opts?: { watch?: boolean }) => {
 +      const query = `?win=secondary${opts?.watch ? '&watch=1' : ''}`
-+      window.open(
++
++      return openBrowserWindow(
 +        `${window.location.origin}${window.location.pathname}${query}#/${encodeURIComponent(sessionId)}`,
-+        '_blank',
-+        'noopener'
++        `hermes-session-${encodeURIComponent(sessionId)}`
 +      )
-+
-+      return { ok: true }
 +    },
-+    openNewSessionWindow: async () => {
-+      window.open(`${window.location.origin}${window.location.pathname}?win=secondary&new=1#/`, '_blank', 'noopener')
-+
-+      return { ok: true }
-+    },
++    openNewSessionWindow: async () =>
++      openBrowserWindow(`${window.location.origin}${window.location.pathname}?win=secondary&new=1#/`, '_blank'),
 +    petOverlay: {
 +      open: async () => ({ ok: false }),
 +      close: async () => ({ ok: true }),

@@ -4,8 +4,8 @@
 88c37ce0bde0707c58a66e98ce7bea9d8c8827844584759003ae06cf99133f8d  apps/desktop/src/app/overlays/overlay-view.tsx
 bbde5ed32baae6ed550e74b19103046a7a2205922160413cbb947cd04439e183  apps/desktop/src/app/shell/app-shell.tsx
 e298cb6bd16eb0bf5e1cc1c478083441efe8aaf40e29b981a0883dcf96fc0d6a  apps/desktop/src/app/shell/titlebar-controls.tsx
-84a5ac27c856771f9646d268fb425aabb100725fa16907a48fcf5706a9215aeb  apps/desktop/src/browser-bridge.test.ts
-2cf767d295dc9f99c45b4ae53079d5b7f05d4b8d7449c9036e7e4c87bfd201d3  apps/desktop/src/browser-bridge.ts
+def0711de696b4b97e5679c907b08535fa59824a08001cb8aa6871e3f7325935  apps/desktop/src/browser-bridge.test.ts
+79c01c8723afec634aaf4b85e615a503d93492678cb03edb3b1c59c365f13a48  apps/desktop/src/browser-bridge.ts
 f15ee4150ef7b793190388928e116ca0f2af40b64f6c89a629258214caf4e44f  apps/desktop/src/components/pane-shell/pane-shell.test.tsx
 6ce59a0d65a5a5a9242bfbd8d3385af6a42718c054b553ed65ee59cde82d0c4d  apps/desktop/src/components/pane-shell/pane-shell.tsx
 996fb384c436b0690f6cdb63ffb7c94b97533b49fbee1a5ac33eca68fb746ddb  apps/desktop/src/main.tsx
