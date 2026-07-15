@@ -96,6 +96,9 @@ def main() -> None:
     parser.add_argument("--prefix", required=True)
     parser.add_argument("--config-dir", required=True)
     parser.add_argument("--unit-dir", required=True)
+    parser.add_argument("--output-config-dir")
+    parser.add_argument("--output-unit-dir")
+    parser.add_argument("--output-stage-script")
     parser.add_argument("--hermes-home", required=True)
     parser.add_argument("--hermes-bin", required=True)
     parser.add_argument("--caddy-bin", required=True)
@@ -113,12 +116,17 @@ def main() -> None:
     prefix = Path(absolute(args.prefix))
     config_dir = Path(absolute(args.config_dir))
     unit_dir = Path(absolute(args.unit_dir))
+    output_config_dir = Path(absolute(args.output_config_dir or args.config_dir))
+    output_unit_dir = Path(absolute(args.output_unit_dir or args.unit_dir))
     hermes_home = absolute(args.hermes_home)
     hermes_bin = absolute(args.hermes_bin)
     caddy_bin = absolute(args.caddy_bin)
     env_file = config_dir / "env"
     caddyfile = config_dir / "Caddyfile"
+    output_env_file = output_config_dir / "env"
+    output_caddyfile = output_config_dir / "Caddyfile"
     stage_script = prefix / "bin" / "stage_renderer.py"
+    output_stage_script = Path(absolute(args.output_stage_script or str(stage_script)))
     dist_root = prefix / "dist"
     source_dist = source_root / "apps" / "desktop" / "dist"
     font = source_root / "node_modules" / "@nous-research" / "ui" / "dist" / "fonts" / "Collapse-Bold.woff2"
@@ -133,11 +141,11 @@ def main() -> None:
         "HERMES_DESKTOP_WEB_FONT": str(font),
     }
 
-    config_dir.mkdir(parents=True, exist_ok=True)
-    write_private_text(env_file, "".join(f"{key}={quote(value)}\n" for key, value in env.items()))
-    stage_script.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(repo_root / "scripts" / "stage_renderer.py", stage_script)
-    stage_script.chmod(0o755)
+    output_config_dir.mkdir(parents=True, exist_ok=True)
+    write_private_text(output_env_file, "".join(f"{key}={quote(value)}\n" for key, value in env.items()))
+    output_stage_script.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(repo_root / "scripts" / "stage_renderer.py", output_stage_script)
+    output_stage_script.chmod(0o755)
 
     path_value = os.pathsep.join(dict.fromkeys([str(Path(hermes_bin).parent), *os.environ.get("PATH", "").split(os.pathsep)]))
     replacements = {
@@ -155,19 +163,19 @@ def main() -> None:
         "CADDY_BIN": systemd_value(caddy_bin),
         "CADDYFILE": systemd_value(str(caddyfile)),
     }
-    render(repo_root / "templates" / "Caddyfile.in", caddyfile, replacements)
+    render(repo_root / "templates" / "Caddyfile.in", output_caddyfile, replacements)
     render(
         repo_root / "templates" / "hermes-desktop-web-gateway.service.in",
-        unit_dir / "hermes-desktop-web-gateway.service",
+        output_unit_dir / "hermes-desktop-web-gateway.service",
         replacements,
     )
     render(
         repo_root / "templates" / "hermes-desktop-web.service.in",
-        unit_dir / "hermes-desktop-web.service",
+        output_unit_dir / "hermes-desktop-web.service",
         replacements,
     )
 
-    print(f"Rendered private runtime configuration under {config_dir}")
+    print(f"Rendered private runtime configuration under {output_config_dir}")
 
 
 if __name__ == "__main__":

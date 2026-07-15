@@ -93,6 +93,30 @@ assert_unit_path_available() {
   return 1
 }
 
+purge_managed_directory_backups() {
+  local target=$1 root=$2 backup
+  for backup in "$(dirname -- "$target")/.${target##*/}.backup."*; do
+    [[ -e $backup || -L $backup ]] || continue
+    if require_managed_directory "$backup" "$root"; then
+      rm -rf -- "$backup"
+    else
+      echo "Preserving unmanaged release backup: $backup" >&2
+    fi
+  done
+}
+
+purge_managed_unit_backups() {
+  local target=$1 backup
+  for backup in "$(dirname -- "$target")/.${target##*/}.backup."*; do
+    [[ -e $backup || -L $backup ]] || continue
+    if is_managed_unit "$backup"; then
+      rm -f -- "$backup"
+    else
+      echo "Preserving unmanaged unit backup: $backup" >&2
+    fi
+  done
+}
+
 stop_managed_units() {
   (( $# )) || return 0
   if ! systemctl --user disable --now "$@"; then
@@ -134,63 +158,88 @@ require_enabled_units() {
   require_unit_state is-enabled enabled "$@"
 }
 
-MANAGED_TREE_TARGET=
-MANAGED_TREE_BACKUP=
-MANAGED_TREE_ROOT=
+MANAGED_REPLACEMENT_TARGETS=()
+MANAGED_REPLACEMENT_BACKUPS=()
+MANAGED_REPLACEMENT_ROOTS=()
 
-begin_managed_tree_replacement() {
-  local candidate target root backup=
+begin_managed_replacement() {
+  local candidate target candidate_root target_root backup=
   candidate=$(realpath -m -- "$1")
   target=$(realpath -m -- "$2")
-  root=$(realpath -m -- "$3")
+  candidate_root=$(realpath -m -- "$3")
+  target_root=$(realpath -m -- "$4")
 
-  [[ -z $MANAGED_TREE_TARGET ]] || { echo 'A managed tree replacement is already active.' >&2; return 1; }
-  managed_child_path "$candidate" "$root" && managed_child_path "$target" "$root" || {
-    echo 'Refusing a managed tree replacement outside its ownership root.' >&2
+  managed_child_path "$candidate" "$candidate_root" && managed_child_path "$target" "$target_root" || {
+    echo 'Refusing a managed replacement outside its ownership roots.' >&2
     return 1
   }
-  [[ -d $candidate && ! -L $candidate && $candidate != "$target" ]] || {
+  [[ $candidate != "$target" && ! -L $candidate && ( -f $candidate || -d $candidate ) ]] || {
     echo "Refusing invalid replacement candidate: $candidate" >&2
     return 1
   }
-  [[ ! -L $target && ( ! -e $target || -d $target ) ]] || {
+  [[ ! -L $target && ( ! -e $target || ( -f $candidate && -f $target ) || ( -d $candidate && -d $target ) ) ]] || {
     echo "Refusing invalid replacement target: $target" >&2
     return 1
   }
 
   mkdir -p -- "$(dirname -- "$target")"
-  if [[ -d $target ]]; then
-    backup=$(mktemp -d "$root/.source-backup.XXXXXX")
+  if [[ -e $target ]]; then
+    backup=$(mktemp -d "$(dirname -- "$target")/.${target##*/}.backup.XXXXXX")
     rmdir -- "$backup"
-    mv -- "$target" "$backup"
   fi
-  if ! mv -- "$candidate" "$target"; then
-    [[ -z $backup ]] || mv -- "$backup" "$target"
-    return 1
-  fi
+  MANAGED_REPLACEMENT_TARGETS+=("$target")
+  MANAGED_REPLACEMENT_BACKUPS+=("$backup")
+  MANAGED_REPLACEMENT_ROOTS+=("$target_root")
 
-  MANAGED_TREE_TARGET=$target
-  MANAGED_TREE_BACKUP=$backup
-  MANAGED_TREE_ROOT=$root
+  [[ -z $backup ]] || mv -- "$target" "$backup"
+  mv -- "$candidate" "$target"
 }
 
-rollback_managed_tree_replacement() {
-  [[ -n $MANAGED_TREE_TARGET ]] || return 0
-  managed_child_path "$MANAGED_TREE_TARGET" "$MANAGED_TREE_ROOT" || return 1
-  rm -rf -- "$MANAGED_TREE_TARGET"
-  [[ -z $MANAGED_TREE_BACKUP ]] || mv -- "$MANAGED_TREE_BACKUP" "$MANAGED_TREE_TARGET"
-  MANAGED_TREE_TARGET=
-  MANAGED_TREE_BACKUP=
-  MANAGED_TREE_ROOT=
+rollback_managed_replacements() {
+  local index target backup root status=0
+  for (( index=${#MANAGED_REPLACEMENT_TARGETS[@]}-1; index>=0; index-- )); do
+    target=${MANAGED_REPLACEMENT_TARGETS[index]}
+    backup=${MANAGED_REPLACEMENT_BACKUPS[index]}
+    root=${MANAGED_REPLACEMENT_ROOTS[index]}
+    if ! managed_child_path "$target" "$root"; then
+      status=1
+      continue
+    fi
+    if [[ -n $backup ]]; then
+      if [[ -e $backup && ! -L $backup ]]; then
+        rm -rf -- "$target" || status=$?
+        mv -- "$backup" "$target" || status=$?
+      elif [[ ! -e $target || -L $target ]]; then
+        status=1
+      fi
+    else
+      rm -rf -- "$target" || status=$?
+    fi
+  done
+  MANAGED_REPLACEMENT_TARGETS=()
+  MANAGED_REPLACEMENT_BACKUPS=()
+  MANAGED_REPLACEMENT_ROOTS=()
+  return "$status"
 }
 
-commit_managed_tree_replacement() {
-  [[ -n $MANAGED_TREE_TARGET ]] || return 0
-  if [[ -n $MANAGED_TREE_BACKUP ]]; then
-    managed_child_path "$MANAGED_TREE_BACKUP" "$MANAGED_TREE_ROOT" || return 1
-    rm -rf -- "$MANAGED_TREE_BACKUP"
-  fi
-  MANAGED_TREE_TARGET=
-  MANAGED_TREE_BACKUP=
-  MANAGED_TREE_ROOT=
+commit_managed_replacements() {
+  local index backup root status=0
+  local -a retained_targets=() retained_backups=() retained_roots=()
+  for index in "${!MANAGED_REPLACEMENT_TARGETS[@]}"; do
+    backup=${MANAGED_REPLACEMENT_BACKUPS[index]}
+    root=${MANAGED_REPLACEMENT_ROOTS[index]}
+    [[ -n $backup ]] || continue
+    if managed_child_path "$backup" "$root" && rm -rf -- "$backup"; then
+      continue
+    fi
+    echo "Could not remove managed release backup: $backup" >&2
+    retained_targets+=("${MANAGED_REPLACEMENT_TARGETS[index]}")
+    retained_backups+=("$backup")
+    retained_roots+=("$root")
+    status=1
+  done
+  MANAGED_REPLACEMENT_TARGETS=("${retained_targets[@]}")
+  MANAGED_REPLACEMENT_BACKUPS=("${retained_backups[@]}")
+  MANAGED_REPLACEMENT_ROOTS=("${retained_roots[@]}")
+  return "$status"
 }

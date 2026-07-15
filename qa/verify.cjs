@@ -47,6 +47,7 @@ async function box(locator) {
       const methods = [
         'getConnection',
         'getGatewayWsUrl',
+        'openSessionWindow',
         'normalizePreviewTarget',
         'watchPreviewFile',
         'stopPreviewFileWatch',
@@ -66,6 +67,44 @@ async function box(locator) {
     if (contract.methods.length || contract.groups.length) failures.push('Browser bridge contract is incomplete')
     if (contract.updateSupported !== false) failures.push('Browser update adapter did not fail closed')
     if (!contract.version.appVersion || contract.version.platform !== 'web') failures.push('Browser version contract is invalid')
+
+    const sessionId = 'qa / ?# ü'
+    const context = desktop.context()
+    const reuseCountKey = '__hermesNamedSessionLoadCount'
+    await context.addInitScript(key => {
+      localStorage.setItem(key, String(Number(localStorage.getItem(key) || '0') + 1))
+    }, reuseCountKey)
+    const expectedPageCount = context.pages().length + 1
+    const sessionPagePromise = context.waitForEvent('page')
+    const firstOpen = await desktop.evaluate(
+      id => window.hermesDesktop.openSessionWindow(id, { watch: true }),
+      sessionId
+    )
+    const sessionPage = await sessionPagePromise
+    await sessionPage.waitForLoadState('domcontentloaded')
+    const firstSessionUrl = new URL(sessionPage.url())
+    const firstSessionHref = sessionPage.url()
+    const firstLoadCount = await sessionPage.evaluate(key => Number(localStorage.getItem(key)), reuseCountKey)
+    const openerWasCleared = await sessionPage.evaluate(() => window.opener === null)
+    const secondOpen = await desktop.evaluate(
+      id => window.hermesDesktop.openSessionWindow(id, { watch: true }),
+      sessionId
+    )
+    await desktop.waitForTimeout(300)
+    const secondLoadCount = await sessionPage.evaluate(key => Number(localStorage.getItem(key)), reuseCountKey)
+    const openerRemainedCleared = await sessionPage.evaluate(() => window.opener === null)
+    if (!firstOpen.ok || !secondOpen.ok) failures.push('Named session window did not open successfully')
+    if (firstSessionUrl.pathname !== new URL(desktop.url()).pathname) failures.push('Named session mount path changed')
+    if (firstSessionUrl.searchParams.get('win') !== 'secondary' || firstSessionUrl.searchParams.get('watch') !== '1') {
+      failures.push('Named session window flags are invalid')
+    }
+    if (decodeURIComponent(firstSessionUrl.hash.slice(2)) !== sessionId) failures.push('Named session route is invalid')
+    if (context.pages().length !== expectedPageCount || firstLoadCount !== 1 || secondLoadCount !== 1) {
+      failures.push('Named session reuse created or reloaded a browser window')
+    }
+    if (sessionPage.url() !== firstSessionHref) failures.push('Named session reuse navigated the browser window')
+    if (!openerWasCleared || !openerRemainedCleared) failures.push('Named session window retained an opener')
+    await sessionPage.close()
     await capture(desktop, 'desktop-home')
     await desktop.close()
 

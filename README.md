@@ -49,15 +49,15 @@ The installer:
 
 1. prepares and builds a fresh dedicated Hermes Agent source candidate;
 2. pins the tested upstream revision and verifies the patch checksum;
-3. atomically replaces the previous source only after the candidate build and configuration pass;
+3. stages source, configuration, units, and the renderer helper before changing the installed release;
 4. creates a random gateway token through a mode-`0600` atomic replacement;
 5. renders user-local Caddy and systemd configuration;
 6. starts the gateway with the pinned checkout first on `PYTHONPATH`;
-7. rejects startup unless the authenticated gateway reports the exact tested baseline and capabilities, then restores the previous source if activation fails.
+7. rejects startup unless the authenticated gateway reports the exact tested baseline and capabilities, then restores the complete previous release if activation fails.
 
 It does not modify or push the installed NousResearch checkout.
 
-For packaging or dry-run validation, `./scripts/install.sh --no-start` performs the same source preparation, build, rendering, and configuration validation without loading or starting services.
+For packaging or dry-run validation, `./scripts/install.sh --no-start` prepares, builds, renders, and validates an isolated candidate without changing the installed release or service state.
 
 Expose the loopback service privately:
 

@@ -56,19 +56,45 @@ managed_child_path "$SOURCE_ROOT" "$PREFIX" || {
   exit 1
 }
 
-claim_managed_directory "$PREFIX" "$DATA_HOME"
-claim_managed_directory "$CONFIG_DIR" "$CONFIG_HOME"
+SOURCE_RELATIVE=${SOURCE_ROOT#"$PREFIX"/}
+CANDIDATE_ROOT=
+if (( START_SERVICES )); then
+  mkdir -p -- "$DATA_HOME" "$CONFIG_HOME"
+  PREFIX_CANDIDATE=$(mktemp -d "$DATA_HOME/.hermes-mobile-desktop-prefix-candidate.XXXXXX")
+  CONFIG_CANDIDATE=$(mktemp -d "$CONFIG_HOME/.hermes-desktop-web-config-candidate.XXXXXX")
+  UNIT_CANDIDATE=$(mktemp -d "$CONFIG_HOME/.hermes-desktop-web-units-candidate.XXXXXX")
+else
+  CANDIDATE_ROOT=$(mktemp -d)
+  PREFIX_CANDIDATE=$CANDIDATE_ROOT/prefix
+  CONFIG_CANDIDATE=$CANDIDATE_ROOT/config
+  UNIT_CANDIDATE=$CANDIDATE_ROOT/units
+  mkdir -p -- "$PREFIX_CANDIDATE" "$CONFIG_CANDIDATE" "$UNIT_CANDIDATE"
+fi
+SOURCE_CANDIDATE=$PREFIX_CANDIDATE/$SOURCE_RELATIVE
+STAGE_CANDIDATE=$PREFIX_CANDIDATE/bin/stage_renderer.py
 
-SOURCE_CANDIDATE=$(mktemp -d "$PREFIX/.source-candidate.XXXXXX")
-cleanup_candidate() {
-  if [[ -n ${SOURCE_CANDIDATE:-} && -d $SOURCE_CANDIDATE && ! -L $SOURCE_CANDIDATE ]]; then
-    rm -rf -- "$SOURCE_CANDIDATE"
-  fi
+cleanup_candidates() {
+  local candidate
+  for candidate in \
+    "${NODE_GYP_DEVDIR:-}" \
+    "$UNIT_CANDIDATE" \
+    "$CONFIG_CANDIDATE" \
+    "$PREFIX_CANDIDATE" \
+    "${CANDIDATE_ROOT:-}"; do
+    if [[ -n $candidate && -d $candidate && ! -L $candidate ]]; then
+      rm -rf -- "$candidate"
+    fi
+  done
 }
-trap cleanup_candidate EXIT
+trap cleanup_candidates EXIT
+NODE_GYP_DEVDIR=$(mktemp -d /tmp/hermes-mobile-node-gyp.XXXXXX)
 
+mkdir -p -- "$(dirname -- "$SOURCE_CANDIDATE")"
+printf '%s\n' "$PACKAGE_ID" >"$PREFIX_CANDIDATE/$MANAGED_MARKER"
+printf '%s\n' "$PACKAGE_ID" >"$CONFIG_CANDIDATE/$MANAGED_MARKER"
 "$ROOT/scripts/prepare_source.sh" "$SOURCE_CANDIDATE"
-npm ci --workspace apps/desktop --include-workspace-root --prefix "$SOURCE_CANDIDATE"
+npm_config_devdir="$NODE_GYP_DEVDIR" \
+  npm ci --workspace apps/desktop --include-workspace-root --prefix "$SOURCE_CANDIDATE"
 npm run build --prefix "$SOURCE_CANDIDATE/apps/desktop"
 
 python3 "$ROOT/scripts/render_config.py" \
@@ -77,6 +103,9 @@ python3 "$ROOT/scripts/render_config.py" \
   --prefix "$PREFIX" \
   --config-dir "$CONFIG_DIR" \
   --unit-dir "$UNIT_DIR" \
+  --output-config-dir "$CONFIG_CANDIDATE" \
+  --output-unit-dir "$UNIT_CANDIDATE" \
+  --output-stage-script "$STAGE_CANDIDATE" \
   --hermes-home "$HERMES_HOME" \
   --hermes-bin "$HERMES_EXECUTABLE" \
   --caddy-bin "$(command -v caddy)" \
@@ -84,58 +113,117 @@ python3 "$ROOT/scripts/render_config.py" \
   --gateway-port "$GATEWAY_PORT"
 
 systemd-analyze --user verify \
-  "$UNIT_DIR/hermes-desktop-web-gateway.service" \
-  "$UNIT_DIR/hermes-desktop-web.service"
-caddy validate --config "$CONFIG_DIR/Caddyfile" --adapter caddyfile
-
-restore_previous_release() {
-  local status=$? had_previous=0 restore_status=0
-  trap - ERR
-  [[ -n ${MANAGED_TREE_BACKUP:-} ]] && had_previous=1
-  echo 'Activation failed; stopping managed services before restoring the previous source.' >&2
-  if ! stop_managed_units hermes-desktop-web.service hermes-desktop-web-gateway.service; then
-    echo 'Managed services could not be proven inactive; preserving both source trees for recovery.' >&2
-    exit "$status"
-  fi
-
-  rollback_managed_tree_replacement || restore_status=$?
-  systemctl --user daemon-reload || restore_status=$?
-  if (( had_previous )); then
-    systemctl --user enable hermes-desktop-web-gateway.service hermes-desktop-web.service || restore_status=$?
-    require_enabled_units hermes-desktop-web-gateway.service hermes-desktop-web.service || restore_status=$?
-    systemctl --user restart hermes-desktop-web-gateway.service hermes-desktop-web.service || restore_status=$?
-    require_active_units hermes-desktop-web-gateway.service hermes-desktop-web.service || restore_status=$?
-  fi
-  (( restore_status == 0 )) || echo 'Previous source was restored, but its services require manual recovery.' >&2
-  exit "$status"
-}
-
-begin_managed_tree_replacement "$SOURCE_CANDIDATE" "$SOURCE_ROOT" "$PREFIX"
-SOURCE_CANDIDATE=
-if (( START_SERVICES )); then
-  trap restore_previous_release ERR
-  systemctl --user daemon-reload
-  systemctl --user enable hermes-desktop-web-gateway.service hermes-desktop-web.service
-  require_enabled_units hermes-desktop-web-gateway.service hermes-desktop-web.service
-  systemctl --user restart hermes-desktop-web-gateway.service hermes-desktop-web.service
-  require_active_units hermes-desktop-web-gateway.service hermes-desktop-web.service
-  python3 "$ROOT/scripts/verify_runtime.py" \
-    --url "http://127.0.0.1:$GATEWAY_PORT" \
-    --env-file "$CONFIG_DIR/env" \
-    --baseline "$(tr -d '[:space:]' <"$ROOT/patches/BASELINE")"
-  trap - ERR
-else
-  echo 'Configuration verified; services were not loaded or started (--no-start).'
-fi
-commit_managed_tree_replacement
+  "$UNIT_CANDIDATE/hermes-desktop-web-gateway.service" \
+  "$UNIT_CANDIDATE/hermes-desktop-web.service"
+caddy validate --config "$CONFIG_CANDIDATE/Caddyfile" --adapter caddyfile
 
 if (( ! START_SERVICES )); then
   cat <<EOF
 
-Dry-run complete. No service was loaded or started.
-Rerun without --no-start to activate the verified configuration.
+Dry-run complete. The candidate source, configuration, and units passed validation.
+The installed release and service state were not changed.
 EOF
   exit 0
+fi
+
+ACTIVATION_ATTEMPTED=0
+restore_previous_release() {
+  local status=${1:-$?} restore_status=0
+  trap - ERR HUP INT TERM
+  echo 'Activation failed; restoring the complete previous release.' >&2
+  if (( ACTIVATION_ATTEMPTED )) &&
+    ! stop_managed_units hermes-desktop-web.service hermes-desktop-web-gateway.service; then
+    echo 'Managed services could not be proven inactive; preserving release backups for recovery.' >&2
+    exit "$status"
+  fi
+
+  rollback_managed_replacements || restore_status=$?
+  systemctl --user daemon-reload || restore_status=$?
+  if (( ${#previous_enabled_units[@]} )); then
+    systemctl --user enable "${previous_enabled_units[@]}" || restore_status=$?
+    require_enabled_units "${previous_enabled_units[@]}" || restore_status=$?
+  fi
+  if (( ${#previous_active_units[@]} )); then
+    systemctl --user restart "${previous_active_units[@]}" || restore_status=$?
+    require_active_units "${previous_active_units[@]}" || restore_status=$?
+  fi
+  (( restore_status == 0 )) || echo 'The previous release was restored, but its services require manual recovery.' >&2
+  exit "$status"
+}
+HAS_MANAGED_RELEASE=0
+if has_valid_directory_marker "$PREFIX" && has_valid_directory_marker "$CONFIG_DIR"; then
+  HAS_MANAGED_RELEASE=1
+fi
+existing_units=()
+previous_active_units=()
+previous_enabled_units=()
+for unit in hermes-desktop-web-gateway.service hermes-desktop-web.service; do
+  unit_owned=0
+  unit_active=0
+  unit_enabled=0
+  is_managed_unit "$UNIT_DIR/$unit" && unit_owned=1
+  if systemctl --user is-active --quiet "$unit"; then
+    unit_active=1
+  else
+    status=$?
+    if (( status != 3 && status != 4 )); then
+      echo "Could not determine whether managed service is active: $unit" >&2
+      exit 1
+    fi
+  fi
+  if systemctl --user is-enabled --quiet "$unit"; then
+    unit_enabled=1
+  else
+    status=$?
+    if (( status != 1 && status != 4 )); then
+      echo "Could not determine whether managed service is enabled: $unit" >&2
+      exit 1
+    fi
+  fi
+  if (( (unit_active || unit_enabled) && ! unit_owned )); then
+    if (( ! HAS_MANAGED_RELEASE )); then
+      echo "Refusing loaded service without package ownership proof: $unit" >&2
+      exit 1
+    fi
+    unit_owned=1
+  fi
+  (( unit_owned )) || continue
+  existing_units+=("$unit")
+  (( unit_active )) && previous_active_units+=("$unit")
+  (( unit_enabled )) && previous_enabled_units+=("$unit")
+done
+trap 'restore_previous_release $?' ERR
+trap 'restore_previous_release 129' HUP
+trap 'restore_previous_release 130' INT
+trap 'restore_previous_release 143' TERM
+if (( ${#existing_units[@]} )); then
+  stop_managed_units "${existing_units[@]}"
+fi
+
+begin_managed_replacement "$PREFIX_CANDIDATE" "$PREFIX" "$DATA_HOME" "$DATA_HOME"
+begin_managed_replacement "$CONFIG_CANDIDATE" "$CONFIG_DIR" "$CONFIG_HOME" "$CONFIG_HOME"
+begin_managed_replacement \
+  "$UNIT_CANDIDATE/hermes-desktop-web-gateway.service" \
+  "$UNIT_DIR/hermes-desktop-web-gateway.service" \
+  "$CONFIG_HOME" "$CONFIG_HOME"
+begin_managed_replacement \
+  "$UNIT_CANDIDATE/hermes-desktop-web.service" \
+  "$UNIT_DIR/hermes-desktop-web.service" \
+  "$CONFIG_HOME" "$CONFIG_HOME"
+
+ACTIVATION_ATTEMPTED=1
+systemctl --user daemon-reload
+systemctl --user enable hermes-desktop-web-gateway.service hermes-desktop-web.service
+require_enabled_units hermes-desktop-web-gateway.service hermes-desktop-web.service
+systemctl --user restart hermes-desktop-web-gateway.service hermes-desktop-web.service
+require_active_units hermes-desktop-web-gateway.service hermes-desktop-web.service
+python3 "$ROOT/scripts/verify_runtime.py" \
+  --url "http://127.0.0.1:$GATEWAY_PORT" \
+  --env-file "$CONFIG_DIR/env" \
+  --baseline "$(tr -d '[:space:]' <"$ROOT/patches/BASELINE")"
+trap - ERR HUP INT TERM
+if ! commit_managed_replacements; then
+  echo 'Activation succeeded, but some previous-release backups were retained; uninstall.sh --purge removes them.' >&2
 fi
 
 cat <<EOF
