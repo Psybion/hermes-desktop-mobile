@@ -2,7 +2,7 @@
 
 Date: 2026-07-21
 
-This record describes the Quicksilver compatibility release deployed on the local host. It is not yet a committed or public release. CI repeats the source-level checks from a clean pinned checkout.
+This record describes the Quicksilver compatibility release deployed on the local host and committed on `feat/quicksilver-desktop-port`. It is not merged to the default branch or tagged as a public release. CI repeats the source-level checks from a clean pinned checkout.
 
 ## Package integrity
 
