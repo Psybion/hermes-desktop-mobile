@@ -13,19 +13,53 @@ HERMES_HOME=${HERMES_HOME:-$HOME/.hermes}
 WEB_PORT=${HERMES_DESKTOP_WEB_PORT:-9122}
 GATEWAY_PORT=${HERMES_DESKTOP_WEB_GATEWAY_PORT:-9131}
 START_SERVICES=1
+ADOPT_EXISTING=0
 
-case ${1:-} in
-  '') ;;
-  --no-start) START_SERVICES=0 ;;
-  -h|--help)
-    echo 'usage: ./scripts/install.sh [--no-start]'
-    exit 0
-    ;;
-  *)
-    echo "Unknown argument: $1" >&2
-    exit 2
-    ;;
-esac
+usage() {
+  echo 'usage: ./scripts/install.sh [--no-start] [--adopt-existing]'
+}
+
+for argument in "$@"; do
+  case $argument in
+    --no-start) START_SERVICES=0 ;;
+    --adopt-existing) ADOPT_EXISTING=1 ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $argument" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+legacy_gateway_unit_is_adoptable() {
+  local unit=$1
+  [[ -f $unit && ! -L $unit ]] && ! is_managed_unit "$unit" || return 1
+  grep -Fqx -- "WorkingDirectory=$HERMES_HOME" "$unit" &&
+    grep -Fqx -- "Environment=\"HERMES_HOME=$HERMES_HOME\"" "$unit" &&
+    grep -Fqx -- "EnvironmentFile=$CONFIG_DIR/env" "$unit" &&
+    grep -Fqx -- "ExecStart=$HERMES_EXECUTABLE dashboard --host 127.0.0.1 --port $GATEWAY_PORT --no-open --skip-build" "$unit" &&
+    [[ $(grep -Ec '^ExecStart=' "$unit" || true) == 1 ]]
+}
+
+legacy_web_unit_is_adoptable() {
+  local unit=$1
+  [[ -f $unit && ! -L $unit ]] && ! is_managed_unit "$unit" || return 1
+  grep -Fqx -- "ExecStartPre=/usr/bin/python3 $HOME/.local/bin/hermes-desktop-web-prepare.py" "$unit" &&
+    grep -Fqx -- "ExecStart=$(command -v caddy) run --config $CONFIG_DIR/Caddyfile --adapter caddyfile" "$unit" &&
+    [[ $(grep -Ec '^ExecStart=' "$unit" || true) == 1 ]] &&
+    [[ $(grep -Ec '^ExecStartPre=' "$unit" || true) == 1 ]]
+}
+
+legacy_install_is_adoptable() {
+  [[ -d $CONFIG_DIR && ! -L $CONFIG_DIR && ! -e $CONFIG_DIR/$MANAGED_MARKER && ! -L $CONFIG_DIR/$MANAGED_MARKER ]] || return 1
+  [[ -f $CONFIG_DIR/env && ! -L $CONFIG_DIR/env && -f $CONFIG_DIR/Caddyfile && ! -L $CONFIG_DIR/Caddyfile ]] || return 1
+  legacy_gateway_unit_is_adoptable "$UNIT_DIR/hermes-desktop-web-gateway.service" &&
+    legacy_web_unit_is_adoptable "$UNIT_DIR/hermes-desktop-web.service"
+}
 
 for command in git npm node python3 systemctl systemd-analyze caddy; do
   command -v "$command" >/dev/null || { echo "Missing required command: $command" >&2; exit 1; }
@@ -44,13 +78,20 @@ fi
 }
 
 assert_managed_directory_available "$PREFIX" "$DATA_HOME"
-assert_managed_directory_available "$CONFIG_DIR" "$CONFIG_HOME"
+if (( ADOPT_EXISTING )); then
+  legacy_install_is_adoptable || {
+    echo 'Refusing legacy adoption: expected the known unowned Desktop Web config and units.' >&2
+    exit 1
+  }
+else
+  assert_managed_directory_available "$CONFIG_DIR" "$CONFIG_HOME"
+  assert_unit_path_available "$UNIT_DIR/hermes-desktop-web-gateway.service"
+  assert_unit_path_available "$UNIT_DIR/hermes-desktop-web.service"
+fi
 require_disjoint_paths "$PREFIX" "$CONFIG_DIR"
 require_disjoint_paths "$PREFIX" "$UNIT_DIR"
 require_disjoint_paths "$CONFIG_DIR" "$UNIT_DIR"
 require_disjoint_paths "$SOURCE_ROOT" "$PREFIX/dist"
-assert_unit_path_available "$UNIT_DIR/hermes-desktop-web-gateway.service"
-assert_unit_path_available "$UNIT_DIR/hermes-desktop-web.service"
 managed_child_path "$SOURCE_ROOT" "$PREFIX" || {
   echo "HERMES_SOURCE_ROOT must be inside the managed package prefix: $PREFIX" >&2
   exit 1
@@ -94,7 +135,12 @@ printf '%s\n' "$PACKAGE_ID" >"$PREFIX_CANDIDATE/$MANAGED_MARKER"
 printf '%s\n' "$PACKAGE_ID" >"$CONFIG_CANDIDATE/$MANAGED_MARKER"
 "$ROOT/scripts/prepare_source.sh" "$SOURCE_CANDIDATE"
 npm_config_devdir="$NODE_GYP_DEVDIR" \
-  npm ci --workspace apps/desktop --include-workspace-root --prefix "$SOURCE_CANDIDATE"
+  npm ci --workspace apps/desktop --workspace web --include-workspace-root --prefix "$SOURCE_CANDIDATE"
+npm run build --workspace web --prefix "$SOURCE_CANDIDATE"
+[[ -f $SOURCE_CANDIDATE/hermes_cli/web_dist/index.html ]] || {
+  echo "Pinned gateway web build did not produce: $SOURCE_CANDIDATE/hermes_cli/web_dist/index.html" >&2
+  exit 1
+}
 npm run build --prefix "$SOURCE_CANDIDATE/apps/desktop"
 
 python3 "$ROOT/scripts/render_config.py" \
@@ -124,6 +170,15 @@ Dry-run complete. The candidate source, configuration, and units passed validati
 The installed release and service state were not changed.
 EOF
   exit 0
+fi
+
+if (( ADOPT_EXISTING )); then
+  legacy_snapshot=$(mktemp -d "$PREFIX_CANDIDATE/legacy-migration-backup.XXXXXX")
+  mkdir -p -- "$legacy_snapshot/config" "$legacy_snapshot/units"
+  cp -a -- "$CONFIG_DIR/env" "$legacy_snapshot/config/env"
+  cp -a -- "$CONFIG_DIR/Caddyfile" "$legacy_snapshot/config/Caddyfile"
+  cp -a -- "$UNIT_DIR/hermes-desktop-web-gateway.service" "$legacy_snapshot/units/hermes-desktop-web-gateway.service"
+  cp -a -- "$UNIT_DIR/hermes-desktop-web.service" "$legacy_snapshot/units/hermes-desktop-web.service"
 fi
 
 ACTIVATION_ATTEMPTED=0
@@ -162,6 +217,7 @@ for unit in hermes-desktop-web-gateway.service hermes-desktop-web.service; do
   unit_active=0
   unit_enabled=0
   is_managed_unit "$UNIT_DIR/$unit" && unit_owned=1
+  (( ADOPT_EXISTING )) && unit_owned=1
   if systemctl --user is-active --quiet "$unit"; then
     unit_active=1
   else

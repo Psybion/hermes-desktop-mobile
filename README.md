@@ -59,6 +59,24 @@ It does not modify or push the installed NousResearch checkout.
 
 For packaging or dry-run validation, `./scripts/install.sh --no-start` prepares, builds, renders, and validates an isolated candidate without changing the installed release or service state.
 
+### Adopt a legacy installation
+
+A Desktop Web release installed before this package is deliberately treated as unowned and will not be overwritten by the normal installer. The one-time migration is limited to the known legacy loopback gateway, Caddy configuration, and two user units; any other shape is refused without modification.
+
+First run the non-activating preflight:
+
+```bash
+./scripts/install.sh --adopt-existing --no-start
+```
+
+Then, after reviewing the candidate and accepting a brief managed-service restart, activate it:
+
+```bash
+./scripts/install.sh --adopt-existing
+```
+
+The installer validates the new candidate before stopping services, retains the original legacy configuration and units in a private `legacy-migration-backup.*` directory under the new package prefix, and restores the exact old release if candidate activation fails.
+
 Expose the loopback service privately:
 
 ```bash

@@ -17,7 +17,7 @@ SPEC.loader.exec_module(verify_runtime)
 
 class Handler(BaseHTTPRequestHandler):
     baseline = "expected-baseline"
-    capabilities = ["browser-bridge-v1", "git-base-branches"]
+    capabilities = ["browser-bridge-v2", "git-base-branches"]
 
     def do_GET(self) -> None:
         if self.path != "/api/desktop-web/compat" or self.headers.get("X-Hermes-Session-Token") != "test-token":
@@ -43,7 +43,7 @@ class Handler(BaseHTTPRequestHandler):
 class RuntimeCompatibilityTest(unittest.TestCase):
     def setUp(self) -> None:
         Handler.baseline = "expected-baseline"
-        Handler.capabilities = ["browser-bridge-v1", "git-base-branches"]
+        Handler.capabilities = ["browser-bridge-v2", "git-base-branches"]
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -67,8 +67,13 @@ class RuntimeCompatibilityTest(unittest.TestCase):
             verify_runtime.verify(self.url, self.env_file, "different-baseline", timeout=1)
 
     def test_rejects_gateway_without_required_capabilities(self) -> None:
-        Handler.capabilities = ["browser-bridge-v1"]
+        Handler.capabilities = ["browser-bridge-v2"]
         with self.assertRaisesRegex(RuntimeError, "git-base-branches"):
+            verify_runtime.verify(self.url, self.env_file, "expected-baseline", timeout=1)
+
+    def test_rejects_legacy_browser_bridge_capability(self) -> None:
+        Handler.capabilities = ["browser-bridge-v1", "git-base-branches"]
+        with self.assertRaisesRegex(RuntimeError, "browser-bridge-v2"):
             verify_runtime.verify(self.url, self.env_file, "expected-baseline", timeout=1)
 
 

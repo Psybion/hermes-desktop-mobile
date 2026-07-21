@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/index.html b/apps/desktop/index.html
-index 831478f..626bc53 100644
+index 831478f6e..626bc5377 100644
 --- a/apps/desktop/index.html
 +++ b/apps/desktop/index.html
 @@ -2,9 +2,15 @@
@@ -20,7 +20,7 @@ index 831478f..626bc53 100644
      <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
      <link rel="shortcut icon" href="/apple-touch-icon.png" />
 diff --git a/apps/desktop/src/app/chat/composer/controls.tsx b/apps/desktop/src/app/chat/composer/controls.tsx
-index 8bc7abc..20853b6 100644
+index 7852ee81e..781c1fb1c 100644
 --- a/apps/desktop/src/app/chat/composer/controls.tsx
 +++ b/apps/desktop/src/app/chat/composer/controls.tsx
 @@ -85,11 +85,18 @@ export function ComposerControls({
@@ -61,10 +61,10 @@ index 8bc7abc..20853b6 100644
          <Tip label={c.startVoice}>
            <Button
 diff --git a/apps/desktop/src/app/chat/composer/index.tsx b/apps/desktop/src/app/chat/composer/index.tsx
-index 1f5df46..2d4d60e 100644
+index 5d8d4ab0a..03d8ed306 100644
 --- a/apps/desktop/src/app/chat/composer/index.tsx
 +++ b/apps/desktop/src/app/chat/composer/index.tsx
-@@ -556,6 +556,19 @@ export function ChatBar({
+@@ -575,6 +575,19 @@ export function ChatBar({
      }
  
      if (event.key === 'Enter' && !event.shiftKey) {
@@ -85,10 +85,10 @@ index 1f5df46..2d4d60e 100644
  
        // Decide from the DOM, not React state. `hasComposerPayload` is derived
 diff --git a/apps/desktop/src/app/overlays/overlay-view.tsx b/apps/desktop/src/app/overlays/overlay-view.tsx
-index 61efdab..38f5bfd 100644
+index 455da2992..42f03d294 100644
 --- a/apps/desktop/src/app/overlays/overlay-view.tsx
 +++ b/apps/desktop/src/app/overlays/overlay-view.tsx
-@@ -58,6 +58,7 @@ export function OverlayView({
+@@ -66,6 +66,7 @@ export function OverlayView({
          'p-[calc(var(--titlebar-height)+0.625rem)]',
          'sm:p-[calc(var(--titlebar-height)+0.875rem)]'
        )}
@@ -96,7 +96,7 @@ index 61efdab..38f5bfd 100644
        onClick={event => {
          if (event.target === event.currentTarget) {
            closeOverlay()
-@@ -70,6 +71,7 @@ export function OverlayView({
+@@ -84,6 +85,7 @@ export function OverlayView({
            'relative flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-(--ui-stroke-secondary) bg-(--ui-chat-surface-background) shadow-md',
            rootClassName
          )}
@@ -104,111 +104,9 @@ index 61efdab..38f5bfd 100644
        >
          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-[calc(var(--titlebar-height)+0.1875rem)] [-webkit-app-region:drag]">
            {headerContent && (
-diff --git a/apps/desktop/src/app/shell/app-shell.tsx b/apps/desktop/src/app/shell/app-shell.tsx
-index efe9035..a239b77 100644
---- a/apps/desktop/src/app/shell/app-shell.tsx
-+++ b/apps/desktop/src/app/shell/app-shell.tsx
-@@ -134,7 +134,9 @@ export function AppShell({
-   // between the pane-tool cluster and the system cluster so they don't sit
-   // flush against each other. Modeled as N gaps (N - 1 inner + 1 trailing)
-   // to keep the formula generic for any pane-tool count.
--  const SYSTEM_TOOL_COUNT = 4
-+  // Mobile web keeps only Settings + the opposite rail toggle. Reserving the
-+  // desktop four-button footprint would squeeze the session title to nothing.
-+  const SYSTEM_TOOL_COUNT = narrowViewport ? 2 : 4
-   const paneToolCount = titlebarTools?.filter(tool => !tool.hidden).length ?? 0
-   const systemToolsWidth = `calc(${SYSTEM_TOOL_COUNT} * (var(--titlebar-control-size) + 0.25rem))`
- 
-diff --git a/apps/desktop/src/app/shell/titlebar-controls.tsx b/apps/desktop/src/app/shell/titlebar-controls.tsx
-index fb0cae4..1724f2f 100644
---- a/apps/desktop/src/app/shell/titlebar-controls.tsx
-+++ b/apps/desktop/src/app/shell/titlebar-controls.tsx
-@@ -2,9 +2,11 @@ import { useStore } from '@nanostores/react'
- import type { ComponentProps, ReactNode } from 'react'
- import { useLocation, useNavigate } from 'react-router-dom'
- 
-+import { PANE_TOGGLE_REVEAL_EVENT } from '@/components/pane-shell'
- import { Button } from '@/components/ui/button'
- import { Codicon } from '@/components/ui/codicon'
- import { Tip } from '@/components/ui/tooltip'
-+import { useMediaQuery } from '@/hooks/use-media-query'
- import { useI18n } from '@/i18n'
- import { triggerHaptic } from '@/lib/haptics'
- import { cn } from '@/lib/utils'
-@@ -14,11 +16,14 @@ import {
-   $fileBrowserOpen,
-   $panesFlipped,
-   $sidebarOpen,
-+  CHAT_SIDEBAR_PANE_ID,
-+  FILE_BROWSER_PANE_ID,
-   toggleFileBrowserOpen,
-   togglePanesFlipped,
-   toggleSidebarOpen
- } from '@/store/layout'
- 
-+import { SIDEBAR_COLLAPSE_MEDIA_QUERY } from '../layout-constants'
- import { appViewForPath, isOverlayView } from '../routes'
- 
- import { titlebarButtonClass } from './titlebar'
-@@ -54,6 +59,17 @@ export function TitlebarControls({ leftTools = [], tools = [], onOpenSettings }:
-   const fileBrowserOpen = useStore($fileBrowserOpen)
-   const sidebarOpen = useStore($sidebarOpen)
-   const panesFlipped = useStore($panesFlipped)
-+  const narrowViewport = useMediaQuery(SIDEBAR_COLLAPSE_MEDIA_QUERY)
-+
-+  const toggleEdge = (id: string, fallback: () => void) => {
-+    if (narrowViewport) {
-+      window.dispatchEvent(new CustomEvent(PANE_TOGGLE_REVEAL_EVENT, { detail: { id } }))
-+
-+      return
-+    }
-+
-+    fallback()
-+  }
- 
-   const toggleHaptics = () => {
-     if (!hapticsMuted) {
-@@ -71,8 +87,16 @@ export function TitlebarControls({ leftTools = [], tools = [], onOpenSettings }:
-   // swaps which pane each one toggles. Default: sessions left, file browser
-   // right. Flipped: file browser left, sessions right. Sidebar toggles never
-   // carry an active highlight — they're plain show/hide affordances.
--  const fileBrowserEdge = { open: fileBrowserOpen, toggle: toggleFileBrowserOpen }
--  const sessionsEdge = { open: sidebarOpen, toggle: toggleSidebarOpen }
-+  const fileBrowserEdge = {
-+    open: fileBrowserOpen,
-+    toggle: () => toggleEdge(FILE_BROWSER_PANE_ID, toggleFileBrowserOpen)
-+  }
-+
-+  const sessionsEdge = {
-+    open: sidebarOpen,
-+    toggle: () => toggleEdge(CHAT_SIDEBAR_PANE_ID, toggleSidebarOpen)
-+  }
-+
-   const leftEdge = panesFlipped ? fileBrowserEdge : sessionsEdge
-   const rightEdge = panesFlipped ? sessionsEdge : fileBrowserEdge
- 
-@@ -146,7 +170,8 @@ export function TitlebarControls({ leftTools = [], tools = [], onOpenSettings }:
-     return null
-   }
- 
--  const visibleSystemTools = systemTools.filter(tool => !tool.hidden)
-+  const visibleSystemTools = systemTools.filter(tool => !tool.hidden && (!narrowViewport || tool.id === 'settings'))
-+
-   const settingsTool = visibleSystemTools.find(tool => tool.id === 'settings')
-   const visibleSystemToolsBeforeSettings = visibleSystemTools.filter(tool => tool.id !== 'settings')
-   const visiblePaneTools = tools.filter(tool => !tool.hidden)
-@@ -158,7 +183,7 @@ export function TitlebarControls({ leftTools = [], tools = [], onOpenSettings }:
-         className="fixed left-(--titlebar-controls-left) top-(--titlebar-controls-top) z-70 flex translate-y-0.5 flex-row items-center gap-x-1 pointer-events-auto select-none [-webkit-app-region:no-drag]"
-       >
-         {leftToolbarTools
--          .filter(tool => !tool.hidden)
-+          .filter(tool => !tool.hidden && (!narrowViewport || tool.id === 'sidebar'))
-           .map(tool => (
-             <TitlebarToolButton key={tool.id} navigate={navigate} tool={tool} />
-           ))}
 diff --git a/apps/desktop/src/browser-bridge.test.ts b/apps/desktop/src/browser-bridge.test.ts
 new file mode 100644
-index 0000000..12dde21
+index 000000000..39a4126e0
 --- /dev/null
 +++ b/apps/desktop/src/browser-bridge.test.ts
 @@ -0,0 +1,191 @@
@@ -330,16 +228,16 @@ index 0000000..12dde21
 +    expect(focus).toHaveBeenCalledTimes(2)
 +  })
 +
-+  it('preserves new-session window semantics', async () => {
++  it('opens a browser-safe peer window through the current Desktop contract', async () => {
 +    const focus = vi.fn()
 +    const opened = { focus, opener: window } as unknown as Window
 +    vi.mocked(window.open).mockReturnValue(opened)
 +    installBrowserBridge()
 +    const api = desktop()
 +
-+    await expect(api.openNewSessionWindow()).resolves.toEqual({ ok: true })
++    await expect(api.openWindow()).resolves.toEqual({ ok: true })
 +    expect(window.open).toHaveBeenCalledWith(
-+      `${window.location.origin}${window.location.pathname}?win=secondary&new=1#/`,
++      `${window.location.origin}${window.location.pathname}?win=secondary#/`,
 +      '_blank'
 +    )
 +    expect(opened.opener).toBeNull()
@@ -354,7 +252,7 @@ index 0000000..12dde21
 +      error: 'popup-blocked',
 +      ok: false
 +    })
-+    await expect(api.openNewSessionWindow()).resolves.toEqual({ error: 'popup-blocked', ok: false })
++    await expect(api.openWindow()).resolves.toEqual({ error: 'popup-blocked', ok: false })
 +  })
 +
 +  it('resolves an empty selection when the browser file picker is cancelled', async () => {
@@ -405,10 +303,10 @@ index 0000000..12dde21
 +})
 diff --git a/apps/desktop/src/browser-bridge.ts b/apps/desktop/src/browser-bridge.ts
 new file mode 100644
-index 0000000..495e0c1
+index 000000000..624a74cf1
 --- /dev/null
 +++ b/apps/desktop/src/browser-bridge.ts
-@@ -0,0 +1,679 @@
+@@ -0,0 +1,694 @@
 +import type {
 +  DesktopActiveProfile,
 +  DesktopBootProgress,
@@ -604,7 +502,15 @@ index 0000000..495e0c1
 +    remoteOauthConnected: false,
 +    remoteTokenPreview: 'Tailnet session',
 +    remoteTokenSet: true,
-+    remoteUrl: window.location.origin
++    remoteUrl: window.location.origin,
++    // Browser deployments cannot inspect the handset's SSH configuration. Keep
++    // these explicit and inert so Settings never mistakes an unavailable native
++    // capability for a usable SSH route.
++    sshHost: '',
++    sshKeyPath: '',
++    sshPort: null,
++    sshRemoteHermesPath: '',
++    sshUser: ''
 +  }
 +
 +  return config
@@ -716,8 +622,13 @@ index 0000000..495e0c1
 +        opened => sessionWindows.set(target, opened)
 +      )
 +    },
-+    openNewSessionWindow: async () =>
-+      openBrowserWindow(`${window.location.origin}${window.location.pathname}?win=secondary&new=1#/`, '_blank'),
++    // Browser counterpart to the native peer-window action. It preserves the
++    // current Desktop contract while leaving session-specific pop-outs to
++    // openSessionWindow above.
++    openWindow: async () => openBrowserWindow(`${window.location.origin}${window.location.pathname}?win=secondary#/`, '_blank'),
++    // Browser windows do not share Electron's process-level cue coordinator.
++    // Fail closed instead of playing duplicate completion sounds from pop-outs.
++    claimAmbientCue: async () => false,
 +    petOverlay: {
 +      open: async () => ({ ok: false }),
 +      close: async () => ({ ok: true }),
@@ -749,6 +660,8 @@ index 0000000..495e0c1
 +    testConnectionConfig: async () => {
 +      throw deploymentManaged('Connection settings')
 +    },
++    sshConfigHosts: async () => ({ hosts: [] }),
++    sshResolveHost: async () => ({ hostname: null, identityFile: null, port: null, user: null }),
 +    probeConnectionConfig: async () => {
 +      throw deploymentManaged('Connection settings')
 +    },
@@ -1088,39 +1001,8 @@ index 0000000..495e0c1
 +  const contract: Window['hermesDesktop'] = bridge
 +  window.hermesDesktop = contract
 +}
-diff --git a/apps/desktop/src/components/pane-shell/pane-shell.test.tsx b/apps/desktop/src/components/pane-shell/pane-shell.test.tsx
-index 0517b08..759f8ac 100644
---- a/apps/desktop/src/components/pane-shell/pane-shell.test.tsx
-+++ b/apps/desktop/src/components/pane-shell/pane-shell.test.tsx
-@@ -107,7 +107,7 @@ describe('PaneShell composition', () => {
- 
-     const rendered = render(
-       <PaneShell>
--        <Pane id="files" side="left" width="240px">
-+        <Pane id="files" resizable={true} side="left" width="240px">
-           files
-         </Pane>
-         <PaneMain>main</PaneMain>
-diff --git a/apps/desktop/src/components/pane-shell/pane-shell.tsx b/apps/desktop/src/components/pane-shell/pane-shell.tsx
-index 31a3f43..4adc303 100644
---- a/apps/desktop/src/components/pane-shell/pane-shell.tsx
-+++ b/apps/desktop/src/components/pane-shell/pane-shell.tsx
-@@ -500,6 +500,13 @@ export function Pane({
-         ref={paneRef}
-         style={{ gridColumn: slot.gridColumn, gridRow: slot.gridRow }}
-       >
-+        <button
-+          aria-label={`Close ${id}`}
-+          className="pointer-events-none fixed inset-0 z-20 bg-black/0 opacity-0 transition-[opacity,background-color] duration-200 group-data-[forced]/reveal:pointer-events-auto group-data-[forced]/reveal:bg-black/45 group-data-[forced]/reveal:opacity-100"
-+          onClick={() => setForced(false)}
-+          tabIndex={forced ? 0 : -1}
-+          type="button"
-+        />
-         <div
-           aria-hidden="true"
-           className="pointer-events-auto absolute inset-y-0 z-30 [-webkit-app-region:no-drag]"
 diff --git a/apps/desktop/src/main.tsx b/apps/desktop/src/main.tsx
-index 5b7621a..06641db 100644
+index b1dd65765..d22c7e98d 100644
 --- a/apps/desktop/src/main.tsx
 +++ b/apps/desktop/src/main.tsx
 @@ -8,6 +8,7 @@ import { createRoot } from 'react-dom/client'
@@ -1131,22 +1013,21 @@ index 5b7621a..06641db 100644
  import { ErrorBoundary } from './components/error-boundary'
  import { HapticsProvider } from './components/haptics-provider'
  import { I18nProvider } from './i18n'
-@@ -15,6 +16,10 @@ import { installClipboardShim } from './lib/clipboard'
+@@ -15,6 +16,9 @@ import { installClipboardShim } from './lib/clipboard'
  import { queryClient } from './lib/query-client'
  import { ThemeProvider } from './themes/context'
  
-+// The packaged app receives this API from Electron's preload. Over HTTPS the
-+// same renderer installs a same-origin gateway adapter instead, allowing the
-+// real Hermes Desktop UI to run as a code-server-style web client.
++// Electron injects this bridge from its preload. The reviewed browser release
++// installs the same capability-shaped adapter over the authenticated gateway.
 +installBrowserBridge()
  installClipboardShim()
  
- // Dev-only: install __PERF_DRIVE__ + __PERF_PROBE__ on window so the
+ // The perf probe ships in dev, and in a production build ONLY when explicitly
 diff --git a/apps/desktop/src/styles.css b/apps/desktop/src/styles.css
-index e5477bb..4e82ede 100644
+index 86a87dbf0..c7a6f0837 100644
 --- a/apps/desktop/src/styles.css
 +++ b/apps/desktop/src/styles.css
-@@ -1827,3 +1827,145 @@ text-* variant utilities. */ .btn-arc {
+@@ -1850,3 +1850,145 @@ text-* variant utilities. */ .btn-arc {
      opacity: 0.4;
    }
  }
@@ -1293,18 +1174,18 @@ index e5477bb..4e82ede 100644
 +  }
 +}
 diff --git a/hermes_cli/web_server.py b/hermes_cli/web_server.py
-index 175ab75..e898fe1 100644
+index a05678b4e..170f8576d 100644
 --- a/hermes_cli/web_server.py
 +++ b/hermes_cli/web_server.py
-@@ -2346,6 +2346,14 @@ class GitBranchSwitchBody(BaseModel):
+@@ -2547,6 +2547,14 @@ class GitBranchSwitchBody(BaseModel):
      branch: str
  
  
 +@app.get("/api/desktop-web/compat")
 +async def desktop_web_compat_route():
 +    return {
-+        "baseline": "569b912d7d0931c7256e9f5fb326609e9deda377",
-+        "capabilities": ["browser-bridge-v1", "git-base-branches"],
++        "baseline": "73c8d40464ad551c9e198ad6e32de8f994f0e10d",
++        "capabilities": ["browser-bridge-v2", "git-base-branches", "layout-tree-narrow-overlays"],
 +    }
 +
 +

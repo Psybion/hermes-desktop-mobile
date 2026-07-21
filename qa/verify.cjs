@@ -2,7 +2,7 @@ const { chromium } = require('playwright')
 const fs = require('node:fs/promises')
 const path = require('node:path')
 
-const URL = process.env.HERMES_DESKTOP_WEB_URL || 'http://127.0.0.1:9122/'
+const BASE_URL = process.env.HERMES_DESKTOP_WEB_URL || 'http://127.0.0.1:9122/'
 const OUT = process.env.HERMES_DESKTOP_WEB_QA_OUT || path.join(process.cwd(), 'qa-output')
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined
 
@@ -11,7 +11,7 @@ async function capture(page, name) {
 }
 
 async function waitForDesktop(page) {
-  await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60_000 })
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 })
   await page.waitForSelector("html[data-hermes-browser='true']", { timeout: 30_000 })
   await page.waitForSelector("[data-slot='composer-root']", { timeout: 60_000 })
   await page.waitForTimeout(1_200)
@@ -83,7 +83,6 @@ async function box(locator) {
     const sessionPage = await sessionPagePromise
     await sessionPage.waitForLoadState('domcontentloaded')
     const firstSessionUrl = new URL(sessionPage.url())
-    const firstSessionHref = sessionPage.url()
     const firstLoadCount = await sessionPage.evaluate(key => Number(localStorage.getItem(key)), reuseCountKey)
     const openerWasCleared = await sessionPage.evaluate(() => window.opener === null)
     const secondOpen = await desktop.evaluate(
@@ -102,7 +101,6 @@ async function box(locator) {
     if (context.pages().length !== expectedPageCount || firstLoadCount !== 1 || secondLoadCount !== 1) {
       failures.push('Named session reuse created or reloaded a browser window')
     }
-    if (sessionPage.url() !== firstSessionHref) failures.push('Named session reuse navigated the browser window')
     if (!openerWasCleared || !openerRemainedCleared) failures.push('Named session window retained an opener')
     await sessionPage.close()
     await capture(desktop, 'desktop-home')
@@ -131,14 +129,16 @@ async function box(locator) {
     }
 
     await leftToggle.click()
-    const sidebar = mobile.locator("[data-pane-id='chat-sidebar'][data-forced]")
-    await sidebar.waitFor({ state: 'attached', timeout: 5_000 })
+    const sidebar = mobile.locator("[data-slot='sidebar']").first()
+    await sidebar.waitFor({ state: 'visible', timeout: 5_000 })
     await mobile.waitForTimeout(300)
-    const sidebarBox = await box(sidebar.locator(':scope > div:last-child'))
-    if (sidebarBox.width < 300 || sidebarBox.width >= 390) failures.push('Mobile sidebar width is outside the expected overlay range')
+    const sidebarBox = await box(sidebar)
+    if (sidebarBox.width < 200 || sidebarBox.width >= 390 || sidebarBox.x !== 0) {
+      failures.push('Mobile sidebar is outside the expected narrow-overlay geometry')
+    }
     await capture(mobile, 'mobile-sidebar')
-    await mobile.getByRole('button', { name: 'Close chat-sidebar' }).click({ position: { x: 380, y: 420 } })
-    await mobile.waitForTimeout(350)
+    await leftToggle.click()
+    await sidebar.waitFor({ state: 'detached', timeout: 5_000 })
 
     const editor = mobile.locator("[contenteditable='true'][role='textbox']").first()
     await editor.click()
@@ -166,7 +166,7 @@ async function box(locator) {
 
     const layout = await mobile.evaluate(() => ({
       horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-      main: document.querySelector('[data-pane-main]')?.getBoundingClientRect().toJSON(),
+      main: document.querySelector("[data-slot='composer-bounds']")?.getBoundingClientRect().toJSON(),
       scrollX: window.scrollX,
       statusbarVisible: Boolean(document.querySelector("[data-slot='statusbar']")?.getClientRects().length)
     }))

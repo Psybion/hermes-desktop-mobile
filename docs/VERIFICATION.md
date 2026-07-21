@@ -1,52 +1,88 @@
 # Verification record
 
-Date: 2026-07-15
+Date: 2026-07-21
 
-This record describes the checks run for the current public release. CI repeats the source-level checks from a clean pinned checkout.
+This record describes the Quicksilver compatibility release deployed on the local host. It is not yet a committed or public release. CI repeats the source-level checks from a clean pinned checkout.
 
 ## Package integrity
 
 - shell syntax, Python compilation, and Node syntax: passed
-- patch SHA-256 verification: passed
+- patch SHA-256 and per-file manifest verification: passed
 - installer ownership, guarded purge, runtime pinning, and compatibility verifier tests: passed
-- machine-specific path and common secret-pattern scan: passed
-- npm audit: 0 vulnerabilities
+- machine-specific path and common secret-pattern scan: passed in the clean CI copy
+- `npm ci` reported 7 inherited dependency advisories (1 low, 5 high, 1 critical); no automatic dependency remediation was applied as part of this compatibility port
 
 ## Clean-room source verification
 
-Baseline: `569b912d7d0931c7256e9f5fb326609e9deda377`
+Baseline: `73c8d40464ad551c9e198ad6e32de8f994f0e10d`
 
 Command: `npm run test:source`
 
 Results:
 
-- pinned upstream fetch and patch application: passed
+- pinned upstream fetch, patch application, per-file verification, and repeat application: passed
 - Desktop TypeScript checks: passed
 - ESLint over every changed Desktop source/test file: passed
-- targeted UI tests: 74 passed in 12 files, including browser popup failure reporting, focus-only named-session reuse, file-picker cancellation, fail-closed deployment-managed settings, and remote-aware base-branch routing
-- Desktop platform tests: 413 passed, 1 skipped in 37 files
+- targeted UI tests: 54 passed in 10 files, including browser popup failure reporting, explicit browser Send behavior, mobile Enter-to-newline handling, fail-closed deployment-managed settings, and remote-aware base-branch routing
+- Desktop platform tests: 662 passed, 2 skipped in 58 files
 - production Vite/Electron build and artifact assertion: passed
 
 The pinned upstream revision itself has unrelated full-tree ESLint findings, so CI scopes ESLint to every file changed by this repository instead of claiming a globally clean upstream tree.
 
 ## Installer dry run
 
-Command: `./scripts/install.sh --no-start` in isolated XDG data/config directories containing spaces and percent signs.
+Command: `./scripts/install.sh --no-start` with isolated `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, package/config roots, and loopback ports.
 
 Results:
 
-- dedicated pinned source checkout: passed
-- patch checksum and application: passed
-- production build: passed
-- generated token file is atomically published at mode `0600`
-- paths with spaces and systemd specifier characters escaped correctly; active Caddy placeholder braces rejected
-- `systemd-analyze --user verify`: passed
-- `caddy validate`: passed
-- installed files and service state unchanged: confirmed
-- installer ownership markers, refusal of unowned loaded services, active and inactive-enabled managed-service discovery with a missing unit file, per-unit state restoration, swap-boundary signal rollback, retained-backup recovery, and guarded uninstall/purge behavior: passed
+- exact pinned source fetch, patch checksum, per-file integrity, and renderer build: passed
+- generated systemd user units and Caddy configuration: passed validation
+- temporary candidate/configuration cleanup: verified
+- installed release, systemd unit state, and live Caddy/gateway processes: unchanged
+
+## Legacy-install adoption validation
+
+The pre-package Desktop Web release on this host is intentionally unowned: it has the expected loopback Caddy/gateway topology but no package prefix or ownership markers. The installer now requires explicit `--adopt-existing` for only that known legacy shape.
+
+- `tests/upgrade.sh`: passed, including an unowned legacy fixture, non-activating adoption dry run, successful managed activation with retained legacy snapshot, and forced candidate-restart rollback to byte-identical legacy config and units
+- `./scripts/install.sh --adopt-existing --no-start`: passed against the actual legacy installation on this host
+- exact source pin, integrity manifests, renderer build, generated units, and generated Caddy configuration: passed
+- post-run proof: both legacy user services remained active/enabled; no managed package prefix, config marker, or managed-unit marker was created
+
+The authorized adoption cutover was completed after the production activation checks described below.
 
 ## Live-runtime acceptance boundary
 
-The public artifact was exercised with `./scripts/install.sh --no-start`; it was not activated as a live service during publication review. This record therefore makes no claim that a currently running host gateway represents the exact release candidate.
+A temporary loopback-only gateway and Caddy renderer were started on distinct QA ports, using the candidate source and generated private configuration. They reported the exact baseline and all required browser capabilities: `browser-bridge-v2`, `git-base-branches`, and `layout-tree-narrow-overlays`.
 
-After installation, `./scripts/verify.sh` is the required live acceptance command. It verifies the managed units, Caddy configuration, active services, authenticated baseline/capabilities, renderer/backend reachability, and Playwright browser QA. The browser lane opens a named session twice in Chromium and fails if the second request creates another page, reloads the existing page, changes its mount/route flags, or restores `window.opener`. Missing Playwright dependencies are a verification failure rather than a skipped success. The optional `npm run qa:chat` lane consumes a configured model turn and remains an explicit operator action.
+Playwright browser QA passed against that temporary runtime:
+
+- desktop bridge contract, fail-closed update adapter, and named session pop-out reuse: passed
+- 390px touch viewport: no console/page/network errors, no horizontal overflow, 44px Send target, touch Enter newline, settings bounds, and hidden desktop status bar: passed
+- current layout-tree session sidebar: mounts at 236px and detaches cleanly on close
+- current Right sidebar/file overlay: opens at `x=154`, width 236px, preserves the 390px composer root, and detaches cleanly on close
+- deployed browser QA captured desktop and 390px phone screenshots under `qa-output/`, including the open Right sidebar
+
+No real chat turn was submitted: `npm run qa:chat` can consume provider usage and create a persistent session turn, so it remains an explicit operator action.
+
+## Production adoption and recovery proof
+
+The authorized `./scripts/install.sh --adopt-existing` cutover was exercised against the live legacy installation.
+
+- first attempt: failed closed because the candidate source did not contain the gateway's required `hermes_cli/web_dist`; the installer restored the unowned legacy config, units, and active/enabled service state
+- corrective coverage: `tests/upgrade.sh` now requires the installer to install the `web` workspace, build its bundle, and assert `hermes_cli/web_dist/index.html`; clean-room source CI builds the same artifact
+- second attempt: the candidate gateway started, but the runtime verifier still required retired capability `browser-bridge-v1`; the installer again restored the complete legacy release
+- corrective coverage: the verifier now requires `browser-bridge-v2`, and its test suite rejects a v1-only gateway
+- final attempt: activation passed the exact-baseline and capability probe, committed the managed release, and retained the original legacy configuration and units in the private `legacy-migration-backup.*` directory
+
+Post-deployment `./scripts/verify.sh` passed:
+
+- both managed user units are active and enabled, with package ownership headers
+- package and config ownership markers are present
+- gateway baseline is exactly `73c8d40464ad551c9e198ad6e32de8f994f0e10d`
+- capabilities include `browser-bridge-v2`, `git-base-branches`, and `layout-tree-narrow-overlays`
+- authenticated renderer/backend reachability and Playwright browser QA passed
+- 390px geometry reported no horizontal overflow, a 236px session sidebar, and a 44px Send target
+- Right sidebar regression reported `x=154`, width 236px, and clean detachment on close
+
+No real provider chat turn was submitted during deployment verification.

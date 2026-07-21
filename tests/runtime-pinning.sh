@@ -36,7 +36,8 @@ fi
 baseline=$(tr -d '[:space:]' <"$ROOT/patches/BASELINE")
 grep -Fq 'require_disjoint_paths "$PREFIX" "$CONFIG_DIR"' "$ROOT/scripts/install.sh"
 grep -Fq 'require_disjoint_paths "$SOURCE_ROOT" "$PREFIX/dist"' "$ROOT/scripts/install.sh"
-grep -Fq "\"baseline\": \"$baseline\"" "$ROOT/patches/hermes-agent-569b912d7d09-desktop-web.patch"
+patch_file=$(printf '%s/hermes-agent-%s-desktop-web.patch' "$ROOT/patches" "${baseline:0:12}")
+grep -Fq "\"baseline\": \"$baseline\"" "$patch_file"
 grep -Fq '  hermes_cli/web_server.py' "$ROOT/patches/FILES_SHA256SUMS"
 
 grep -Fq $'\t@asset_file {' "$config_dir/Caddyfile"

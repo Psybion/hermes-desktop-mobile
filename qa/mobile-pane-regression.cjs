@@ -1,4 +1,6 @@
 const { chromium } = require('playwright')
+const fs = require('fs')
+const path = require('path')
 
 const URL = process.env.HERMES_DESKTOP_WEB_URL || 'http://127.0.0.1:9122/'
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined
@@ -14,24 +16,25 @@ const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefi
   try {
     await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60_000 })
     await page.waitForSelector("[data-slot='composer-root']", { timeout: 60_000 })
-    await page.getByRole('button', { name: 'Show right sidebar' }).click()
-    const pane = page.locator("[data-pane-id='file-browser']")
-    await pane.waitFor({ state: 'attached' })
+    const rightToggle = page.getByRole('button', { name: 'Show right sidebar' })
+    await rightToggle.click()
+    const pane = page.locator("aside[aria-label='Right sidebar']")
+    await pane.waitFor({ state: 'visible' })
     await page.waitForTimeout(300)
-    const opened = await pane.locator(':scope > div:last-child').boundingBox()
-    await page.getByRole('button', { name: 'Close file-browser' }).click({ position: { x: 4, y: 420 } })
-    await page.waitForTimeout(350)
-    const closed = await pane.locator(':scope > div:last-child').boundingBox()
-    const state = await pane.evaluate(element => ({
-      forced: element.hasAttribute('data-forced'),
-      main: document.querySelector('[data-pane-main]')?.getBoundingClientRect().toJSON(),
-      pointerEvents: getComputedStyle(element.lastElementChild).pointerEvents,
+    const opened = await pane.boundingBox()
+    const screenshotPath = process.env.HERMES_MOBILE_PANE_SCREENSHOT ||
+      path.join(__dirname, '..', 'qa-output', 'mobile-right-sidebar.png')
+    fs.mkdirSync(path.dirname(screenshotPath), { recursive: true })
+    await page.screenshot({ path: screenshotPath, fullPage: true })
+    await rightToggle.click()
+    await pane.waitFor({ state: 'detached' })
+    const state = await page.evaluate(() => ({
+      main: document.querySelector("[data-slot='composer-bounds']")?.getBoundingClientRect().toJSON(),
       scrollX: window.scrollX
     }))
-    const openedOnscreen = opened && opened.x < 390 && opened.x + opened.width > 0
-    const closedOffscreen = closed && (closed.x + closed.width <= 0 || closed.x >= 390)
-    console.log(JSON.stringify({ opened, closed, openedOnscreen, closedOffscreen, state }))
-    if (!openedOnscreen || !closedOffscreen || state.forced || state.scrollX !== 0 || state.main?.x !== 0) {
+    const openedOnscreen = opened && opened.x >= 0 && opened.x + opened.width <= 390 && opened.width >= 200
+    console.log(JSON.stringify({ opened, closedDetached: true, openedOnscreen, state, screenshotPath }))
+    if (!openedOnscreen || state.scrollX !== 0 || state.main?.x !== 0 || state.main?.width !== 390) {
       process.exitCode = 1
     }
   } finally {

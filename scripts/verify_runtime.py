@@ -12,7 +12,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-REQUIRED_CAPABILITIES = {"browser-bridge-v1", "git-base-branches"}
+REQUIRED_CAPABILITIES = {"browser-bridge-v2", "git-base-branches"}
 
 
 def session_token(env_file: Path) -> str:

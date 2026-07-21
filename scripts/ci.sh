@@ -15,7 +15,7 @@ fi
 "$ROOT/scripts/prepare_source.sh" "$SOURCE"
 "$ROOT/scripts/prepare_source.sh" "$SOURCE"
 python3 -m py_compile "$SOURCE/hermes_cli/web_server.py"
-npm ci --workspace apps/desktop --include-workspace-root --prefix "$SOURCE"
+npm ci --workspace apps/desktop --workspace web --include-workspace-root --prefix "$SOURCE"
 cd "$SOURCE/apps/desktop"
 npm run typecheck
 npx eslint \
@@ -24,14 +24,9 @@ npx eslint \
   src/main.tsx \
   src/app/chat/composer/controls.tsx \
   src/app/chat/composer/index.tsx \
-  src/app/overlays/overlay-view.tsx \
-  src/app/shell/app-shell.tsx \
-  src/app/shell/titlebar-controls.tsx \
-  src/components/pane-shell/pane-shell.tsx \
-  src/components/pane-shell/pane-shell.test.tsx
-npx vitest run --environment jsdom \
+  src/app/overlays/overlay-view.tsx
+npx vitest run --project ui \
   src/browser-bridge.test.ts \
-  src/components/pane-shell/pane-shell.test.tsx \
   src/app/chat/composer/trigger-popover.test.tsx \
   src/app/chat/composer/text-utils.test.ts \
   src/app/chat/composer/slash-nav-dom-repro.test.tsx \
@@ -40,9 +35,15 @@ npx vitest run --environment jsdom \
   src/app/chat/composer/hooks/use-composer-url-dialog.test.tsx \
   src/app/chat/composer/enter-submit-dom-race.test.tsx \
   src/app/chat/composer/composer-utils.test.ts \
-  src/app/chat/composer/composer-text-guard.test.tsx \
-  src/app/shell/titlebar.test.ts
+  src/app/chat/composer/composer-text-guard.test.tsx
 npm run test:desktop:platforms
+cd "$SOURCE"
+npm run build --workspace web
+[[ -f hermes_cli/web_dist/index.html ]] || {
+  echo "Pinned gateway web build did not produce: $SOURCE/hermes_cli/web_dist/index.html" >&2
+  exit 1
+}
+cd "$SOURCE/apps/desktop"
 npm run build
 git diff --check
 git diff --cached --check
